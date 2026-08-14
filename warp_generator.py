@@ -3,11 +3,21 @@ import requests
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import serialization
 
+# --- НАСТРОЙКА ПРОКСИ ---
+# Если Cloudflare блокирует Railway, используй прокси.
+# Формат: "http://user:password@ip:port" или просто "http://ip:port"
+PROXY_URL = os.getenv("https://43.167.165.123:10808", None) 
+
 http_session = requests.Session()
 http_session.headers.update({
     "User-Agent": "okhttp/3.12.1",
     "Content-Type": "application/json; charset=UTF-8"
 })
+
+# Настройка прокси для сессии
+if PROXY_URL:
+    proxies = {"http": PROXY_URL, "https": PROXY_URL}
+    http_session.proxies.update(proxies)
 
 COUNTRY_ENDPOINTS = {
     "de": {"name": "🇩🇪 Германия", "endpoint": "162.159.192.1:2408"},
@@ -46,12 +56,12 @@ def register_warp_account(country_code="de"):
     }
 
     try:
+        # Теперь запрос идет через прокси (если PROXY_URL задан)
         response = http_session.post(url, json=payload, timeout=10)
         data = response.json()
         
-        # ЗАЩИТА: проверяем, есть ли 'result' в ответе
         if "result" not in data:
-            print(f"[ERROR] API Cloudflare вернул ошибку: {data}")
+            print(f"[ERROR] API вернул: {data}")
             return None
 
         v4_addr = data["result"]["config"]["interface"]["addresses"]["v4"]
@@ -69,12 +79,11 @@ def register_warp_account(country_code="de"):
             "country_name": country_info["name"]
         }
     except Exception as e:
-        print(f"[ERROR] Сетевая ошибка генерации WARP: {e}")
+        print(f"[ERROR] Ошибка (вероятно, прокси или сеть): {e}")
         return None
 
 def build_amnezia_wg_config(warp_data):
-    if not warp_data:
-        return None
+    if not warp_data: return None
     return f"""[Interface]
 PrivateKey = {warp_data['private_key']}
 Address = {warp_data['v4_addr']}/32, {warp_data['v6_addr']}/128

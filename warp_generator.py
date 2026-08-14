@@ -3,7 +3,7 @@ import requests
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import serialization
 
-# Оптимизированная сессия для быстрых запросов
+# Оптимизированная сессия
 http_session = requests.Session()
 http_session.headers.update({
     "User-Agent": "okhttp/3.12.1",
@@ -25,7 +25,8 @@ def generate_wg_keys():
 
     priv_bytes = private_key.private_bytes(
         encoding=serialization.Encoding.Raw,
-        format=serialization.PrivateFormat.Raw
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption()  # ИСПРАВЛЕНИЕ: добавили NoEncryption
     )
     pub_bytes = public_key.public_bytes(
         encoding=serialization.Encoding.Raw,
@@ -52,7 +53,7 @@ def register_warp_account(country_code="de"):
     }
 
     try:
-        response = http_session.post(url, json=payload, timeout=5)
+        response = http_session.post(url, json=payload, timeout=10)
         response.raise_for_status()
         data = response.json()
 

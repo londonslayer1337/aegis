@@ -1,12 +1,11 @@
+import os
 import base64
 import requests
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import serialization
 
-# --- НАСТРОЙКА ПРОКСИ ---
-# Если Cloudflare блокирует Railway, используй прокси.
-# Формат: "http://user:password@ip:port" или просто "http://ip:port"
-PROXY_URL = os.getenv("https://43.167.165.123:10808", None) 
+# Читаем прокси из переменных окружения Railway (или задаем запасной прямо здесь)
+PROXY_URL = os.getenv("PROXY_URL", "https://43.167.165.123:10808")
 
 http_session = requests.Session()
 http_session.headers.update({
@@ -14,10 +13,12 @@ http_session.headers.update({
     "Content-Type": "application/json; charset=UTF-8"
 })
 
-# Настройка прокси для сессии
+# Подключаем прокси к сессии, если он указан
 if PROXY_URL:
-    proxies = {"http": PROXY_URL, "https": PROXY_URL}
-    http_session.proxies.update(proxies)
+    http_session.proxies.update({
+        "http": PROXY_URL,
+        "https": PROXY_URL
+    })
 
 COUNTRY_ENDPOINTS = {
     "de": {"name": "🇩🇪 Германия", "endpoint": "162.159.192.1:2408"},
@@ -27,8 +28,10 @@ COUNTRY_ENDPOINTS = {
 }
 
 def generate_wg_keys():
+    """Генерирует приватный и публичный ключи WireGuard"""
     private_key = x25519.X25519PrivateKey.generate()
     public_key = private_key.public_key()
+
     priv_bytes = private_key.private_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PrivateFormat.Raw,
@@ -38,14 +41,17 @@ def generate_wg_keys():
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw
     )
+
     return (
         base64.b64encode(priv_bytes).decode('utf-8'),
         base64.b64encode(pub_bytes).decode('utf-8')
     )
 
 def register_warp_account(country_code="de"):
+    """Регистрирует устройство в Cloudflare WARP через прокси"""
     priv_key, pub_key = generate_wg_keys()
     url = "https://api.cloudflareclient.com/v0a2158/reg"
+    
     payload = {
         "install_id": "",
         "tos": "2024-01-01T00:00:00.000Z",
@@ -56,17 +62,17 @@ def register_warp_account(country_code="de"):
     }
 
     try:
-        # Теперь запрос идет через прокси (если PROXY_URL задан)
-        response = http_session.post(url, json=payload, timeout=10)
+        response = http_session.post(url, json=payload, timeout=12)
         data = response.json()
-        
+
         if "result" not in data:
-            print(f"[ERROR] API вернул: {data}")
+            print(f"[ERROR] API Cloudflare вернул ошибку: {data}")
             return None
 
         v4_addr = data["result"]["config"]["interface"]["addresses"]["v4"]
         v6_addr = data["result"]["config"]["interface"]["addresses"]["v6"]
         peer_pubkey = data["result"]["config"]["peers"][0]["public_key"]
+        
         country_info = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
 
         return {
@@ -78,17 +84,22 @@ def register_warp_account(country_code="de"):
             "endpoint": country_info["endpoint"],
             "country_name": country_info["name"]
         }
+
     except Exception as e:
-        print(f"[ERROR] Ошибка (вероятно, прокси или сеть): {e}")
+        print(f"[ERROR] Ошибка запроса (проверь прокси): {e}")
         return None
 
 def build_amnezia_wg_config(warp_data):
-    if not warp_data: return None
-    return f"""[Interface]
+    """Формирует готовый .conf файл AmneziaWG"""
+    if not warp_data:
+        return None
+
+    config = f"""[Interface]
 PrivateKey = {warp_data['private_key']}
 Address = {warp_data['v4_addr']}/32, {warp_data['v6_addr']}/128
 DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111
 
+# Защита AmneziaWG для обхода блокировок DPI
 Jc = 4
 Jmin = 40
 Jmax = 70
@@ -104,3 +115,4 @@ PublicKey = {warp_data['peer_pubkey']}
 Endpoint = {warp_data['endpoint']}
 AllowedIPs = 0.0.0.0/0, ::/0
 """
+    return config

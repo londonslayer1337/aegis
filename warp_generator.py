@@ -4,21 +4,13 @@ import requests
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import serialization
 
-# Читаем прокси из переменных окружения Railway (или задаем запасной прямо здесь)
-PROXY_URL = os.getenv("PROXY_URL", "https://43.167.165.123:10808")
-
-http_session = requests.Session()
-http_session.headers.update({
-    "User-Agent": "okhttp/3.12.1",
-    "Content-Type": "application/json; charset=UTF-8"
-})
-
-# Подключаем прокси к сессии, если он указан
-if PROXY_URL:
-    http_session.proxies.update({
-        "http": PROXY_URL,
-        "https": PROXY_URL
-    })
+# Список надежных публичных HTTP/SOCKS5 прокси для обхода Cloudflare-блокировок Railway
+FALLBACK_PROXIES = [
+    "http://185.199.229.156:7492",
+    "http://43.167.165.123:10808",
+    "socks5://185.230.125.101:1080",
+    "http://103.152.112.162:80"
+]
 
 COUNTRY_ENDPOINTS = {
     "de": {"name": "🇩🇪 Германия", "endpoint": "162.159.192.1:2408"},
@@ -28,7 +20,7 @@ COUNTRY_ENDPOINTS = {
 }
 
 def generate_wg_keys():
-    """Генерирует приватный и публичный ключи WireGuard"""
+    """Генерирует ключ параметра WireGuard"""
     private_key = x25519.X25519PrivateKey.generate()
     public_key = private_key.public_key()
 
@@ -48,7 +40,7 @@ def generate_wg_keys():
     )
 
 def register_warp_account(country_code="de"):
-    """Регистрирует устройство в Cloudflare WARP через прокси"""
+    """Регистрирует ключ в Cloudflare WARP с автоматическим перебором резервных маршрутов"""
     priv_key, pub_key = generate_wg_keys()
     url = "https://api.cloudflareclient.com/v0a2158/reg"
     
@@ -61,45 +53,61 @@ def register_warp_account(country_code="de"):
         "locale": "en_US"
     }
 
-    try:
-        response = http_session.post(url, json=payload, timeout=12)
-        data = response.json()
+    headers = {
+        "User-Agent": "okhttp/3.12.1",
+        "Content-Type": "application/json; charset=UTF-8"
+    }
 
-        if "result" not in data:
-            print(f"[ERROR] API Cloudflare вернул ошибку: {data}")
-            return None
+    # Сначала пробуем из переменной PROXY_URL, затем списком резервных
+    env_proxy = os.getenv("PROXY_URL")
+    proxies_to_try = [env_proxy] if env_proxy else []
+    proxies_to_try.extend(FALLBACK_PROXIES)
+    proxies_to_try.append(None)  # На случай если прямой запрос пройдет
 
-        v4_addr = data["result"]["config"]["interface"]["addresses"]["v4"]
-        v6_addr = data["result"]["config"]["interface"]["addresses"]["v6"]
-        peer_pubkey = data["result"]["config"]["peers"][0]["public_key"]
+    for proxy in proxies_to_try:
+        session = requests.Session()
+        session.headers.update(headers)
         
-        country_info = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
+        proxy_dict = {"http": proxy, "https": proxy} if proxy else None
+        
+        try:
+            print(f"[INFO] Пробуем отправку запроса через: {proxy if proxy else 'Direct IP'}")
+            response = session.post(url, json=payload, proxies=proxy_dict, timeout=7)
+            data = response.json()
 
-        return {
-            "private_key": priv_key,
-            "public_key": pub_key,
-            "v4_addr": v4_addr,
-            "v6_addr": v6_addr,
-            "peer_pubkey": peer_pubkey,
-            "endpoint": country_info["endpoint"],
-            "country_name": country_info["name"]
-        }
+            if "result" in data and data["result"]:
+                v4_addr = data["result"]["config"]["interface"]["addresses"]["v4"]
+                v6_addr = data["result"]["config"]["interface"]["addresses"]["v6"]
+                peer_pubkey = data["result"]["config"]["peers"][0]["public_key"]
+                country_info = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
 
-    except Exception as e:
-        print(f"[ERROR] Ошибка запроса (проверь прокси): {e}")
-        return None
+                return {
+                    "private_key": priv_key,
+                    "public_key": pub_key,
+                    "v4_addr": v4_addr,
+                    "v6_addr": v6_addr,
+                    "peer_pubkey": peer_pubkey,
+                    "endpoint": country_info["endpoint"],
+                    "country_name": country_info["name"]
+                }
+            else:
+                print(f"[WARN] Сервер ответил с ошибкой: {data}")
+        except Exception as e:
+            print(f"[WARN] Не удалось подключиться через {proxy}: {e}")
+            continue
+
+    print("[ERROR] Все каналы запросов завершились неудачей.")
+    return None
 
 def build_amnezia_wg_config(warp_data):
-    """Формирует готовый .conf файл AmneziaWG"""
     if not warp_data:
         return None
 
-    config = f"""[Interface]
+    return f"""[Interface]
 PrivateKey = {warp_data['private_key']}
 Address = {warp_data['v4_addr']}/32, {warp_data['v6_addr']}/128
 DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111
 
-# Защита AmneziaWG для обхода блокировок DPI
 Jc = 4
 Jmin = 40
 Jmax = 70
@@ -115,4 +123,3 @@ PublicKey = {warp_data['peer_pubkey']}
 Endpoint = {warp_data['endpoint']}
 AllowedIPs = 0.0.0.0/0, ::/0
 """
-    return config

@@ -18,12 +18,30 @@ COUNTRY_ENDPOINTS = {
     "us": {"name": "🇺🇸 США", "endpoint": "162.159.195.1:2408"},
     "jp": {"name": "🇯🇵 Япония", "endpoint": "162.159.194.1:2408"}
 }
+import os
+import base64
+import httpx
+import asyncio
+from cryptography.hazmat.primitives.asymmetric import x25519
+from cryptography.hazmat.primitives import serialization
+
+# Заголовок, который использует реальное приложение WARP на Android
+HEADERS = {
+    "User-Agent": "okhttp/3.12.1",
+    "Content-Type": "application/json; charset=UTF-8",
+    "CF-Client-Version": "a-6.15-2408271300" 
+}
+
+COUNTRY_ENDPOINTS = {
+    "de": {"name": "🇩🇪 Германия", "endpoint": "162.159.192.1:2408"},
+    "nl": {"name": "🇳🇱 Нидерланды", "endpoint": "162.159.193.1:2408"},
+    "us": {"name": "🇺🇸 США", "endpoint": "162.159.195.1:2408"},
+    "jp": {"name": "🇯🇵 Япония", "endpoint": "162.159.194.1:2408"}
+}
 
 def generate_wg_keys():
-    """Генерирует ключ параметра WireGuard"""
     private_key = x25519.X25519PrivateKey.generate()
     public_key = private_key.public_key()
-
     priv_bytes = private_key.private_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PrivateFormat.Raw,
@@ -33,17 +51,11 @@ def generate_wg_keys():
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw
     )
+    return base64.b64encode(priv_bytes).decode('utf-8'), base64.b64encode(pub_bytes).decode('utf-8')
 
-    return (
-        base64.b64encode(priv_bytes).decode('utf-8'),
-        base64.b64encode(pub_bytes).decode('utf-8')
-    )
-
-def register_warp_account(country_code="de"):
-    """Регистрирует ключ в Cloudflare WARP с автоматическим перебором резервных маршрутов"""
+async def register_warp_account(country_code="de"):
     priv_key, pub_key = generate_wg_keys()
     url = "https://api.cloudflareclient.com/v0a2158/reg"
-    
     payload = {
         "install_id": "",
         "tos": "2024-01-01T00:00:00.000Z",
@@ -53,56 +65,42 @@ def register_warp_account(country_code="de"):
         "locale": "en_US"
     }
 
-    headers = {
-        "User-Agent": "okhttp/3.12.1",
-        "Content-Type": "application/json; charset=UTF-8"
-    }
-
-    # Сначала пробуем из переменной PROXY_URL, затем списком резервных
-    env_proxy = os.getenv("PROXY_URL")
-    proxies_to_try = [env_proxy] if env_proxy else []
-    proxies_to_try.extend(FALLBACK_PROXIES)
-    proxies_to_try.append(None)  # На случай если прямой запрос пройдет
-
-    for proxy in proxies_to_try:
-        session = requests.Session()
-        session.headers.update(headers)
-        
-        proxy_dict = {"http": proxy, "https": proxy} if proxy else None
-        
+    # Используем httpx с http2=True (эмуляция браузера/приложения)
+    async with httpx.AsyncClient(http2=True, headers=HEADERS, timeout=15.0) as client:
         try:
-            print(f"[INFO] Пробуем отправку запроса через: {proxy if proxy else 'Direct IP'}")
-            response = session.post(url, json=payload, proxies=proxy_dict, timeout=7)
+            response = await client.post(url, json=payload)
+            
+            # ВАЖНО: Если код не 200, выводим всё в логи, чтобы понять причину
+            if response.status_code != 200:
+                print(f"[DEBUG ERROR] Статус: {response.status_code}, Ответ: {response.text}")
+                return None
+            
             data = response.json()
+            
+            if "result" not in data:
+                print(f"[ERROR] Нет ключа 'result' в ответе: {data}")
+                return None
 
-            if "result" in data and data["result"]:
-                v4_addr = data["result"]["config"]["interface"]["addresses"]["v4"]
-                v6_addr = data["result"]["config"]["interface"]["addresses"]["v6"]
-                peer_pubkey = data["result"]["config"]["peers"][0]["public_key"]
-                country_info = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
+            v4_addr = data["result"]["config"]["interface"]["addresses"]["v4"]
+            v6_addr = data["result"]["config"]["interface"]["addresses"]["v6"]
+            peer_pubkey = data["result"]["config"]["peers"][0]["public_key"]
+            country_info = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
 
-                return {
-                    "private_key": priv_key,
-                    "public_key": pub_key,
-                    "v4_addr": v4_addr,
-                    "v6_addr": v6_addr,
-                    "peer_pubkey": peer_pubkey,
-                    "endpoint": country_info["endpoint"],
-                    "country_name": country_info["name"]
-                }
-            else:
-                print(f"[WARN] Сервер ответил с ошибкой: {data}")
+            return {
+                "private_key": priv_key,
+                "public_key": pub_key,
+                "v4_addr": v4_addr,
+                "v6_addr": v6_addr,
+                "peer_pubkey": peer_pubkey,
+                "endpoint": country_info["endpoint"],
+                "country_name": country_info["name"]
+            }
         except Exception as e:
-            print(f"[WARN] Не удалось подключиться через {proxy}: {e}")
-            continue
-
-    print("[ERROR] Все каналы запросов завершились неудачей.")
-    return None
+            print(f"[ERROR] Исключение при запросе: {e}")
+            return None
 
 def build_amnezia_wg_config(warp_data):
-    if not warp_data:
-        return None
-
+    if not warp_data: return None
     return f"""[Interface]
 PrivateKey = {warp_data['private_key']}
 Address = {warp_data['v4_addr']}/32, {warp_data['v6_addr']}/128
@@ -123,3 +121,4 @@ PublicKey = {warp_data['peer_pubkey']}
 Endpoint = {warp_data['endpoint']}
 AllowedIPs = 0.0.0.0/0, ::/0
 """
+

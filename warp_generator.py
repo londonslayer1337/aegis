@@ -68,7 +68,6 @@ def register_warp_account(country_code="de"):
         v6_addr = data["result"]["config"]["interface"]["addresses"]["v6"]
         peer_pubkey = data["result"]["config"]["peers"][0]["public_key"]
         
-        # Берем кастомный Эндпоинт выбранной страны
         country_info = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
         selected_endpoint = country_info["endpoint"]
 
@@ -112,5 +111,4 @@ PublicKey = {warp_data['peer_pubkey']}
 Endpoint = {warp_data['endpoint']}
 AllowedIPs = 0.0.0.0/0, ::/0
 """
-    
-return config
+    return config  # <--- Теперь return находится СТРОГО внутри функции!

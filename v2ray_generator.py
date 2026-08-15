@@ -114,5 +114,5 @@ async def get_free_v2ray_config(country_code: str = None) -> str | None:
                 return key
 
     # Если среди проверенных никто не ответил, возвращаем случайный из кандидатов
-    return random.choice(candidate_keys) if candidate_key
+    return random.choice(candidate_keys) if candidate_keys
     s else None

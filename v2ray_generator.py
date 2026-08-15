@@ -3,25 +3,20 @@ import random
 import httpx
 import re
 import asyncio
-from urllib.parse import urlparse
+import socket
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
-# Источники с частым обновлением ключей
+# Проверенные динамические подписки VLESS / WARP / Xray
 VLESS_SUBSCRIPTION_URLS = [
     "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/All_Configs_Sub.txt",
     "https://raw.githubusercontent.com/freefq/free/master/v2",
     "https://raw.githubusercontent.com/mft00/v2ray/main/v2ray.txt",
-    "https://raw.githubusercontent.com/v2raywg/v2ray/main/v2ray"
+    "https://raw.githubusercontent.com/v2raywg/v2ray/main/v2ray",
+    "https://raw.githubusercontent.com/EskandarAtaro/V2ray-Configs/main/Splitted-By-Protocol/vless.txt"
 ]
 
-COUNTRY_PATTERNS = {
-    "de": [r"germany", r"de", r"🇩🇪", r"германия"],
-    "nl": [r"netherlands", r"dutch", r"nl", r"🇳🇱", r"нидерланды"],
-    "us": [r"united states", r"usa", r"us", r"🇺🇸", r"сша"],
-    "jp": [r"japan", r"jp", r"🇯🇵", r"япония"]
-}
-
 def parse_host_and_port(key: str) -> tuple[str | None, int | None]:
-    """Извлекает IP/домен и порт из VLESS, VMess, Trojan, SS ссылок."""
+    """Извлекает IP/домен и порт из ссылки VLESS / VMess / Trojan / SS."""
     try:
         if key.startswith("vmess://"):
             b64_data = key.replace("vmess://", "")
@@ -38,13 +33,45 @@ def parse_host_and_port(key: str) -> tuple[str | None, int | None]:
     except Exception:
         return None, None
 
-async def check_node_alive(host: str, port: int, timeout: float = 2.5) -> bool:
-    """Проверяет доступность сервера через TCP-подключение."""
+def optimize_key_dns(key: str) -> str:
+    """Исправляет параметры ключа, настраивая чистый DNS (1.1.1.1) и убирает конфликты."""
+    try:
+        if not key.startswith("vless://"):
+            return key
+            
+        parsed = urlparse(key)
+        query_params = parse_qs(parsed.query)
+        
+        # Настройка параметров для обхода блокировок и чистого DNS
+        query_params['dns'] = ['1.1.1.1']
+        
+        # Если в ключе нет зашифрованного SNI, ставим стандартный TLS/Cloudflare
+        if 'security' not in query_params:
+            query_params['security'] = ['tls']
+            
+        new_query = urlencode(query_params, doseq=True)
+        new_parsed = parsed._replace(query=new_query)
+        return urlunparse(new_parsed)
+    except Exception:
+        return key
+
+async def check_node_dns_and_socket(host: str, port: int, timeout: float = 2.0) -> bool:
+    """Проверяет DNS-резолв и делает активное TCP-рукопожатие с узлом."""
     if not host or not port:
         return False
     try:
+        # 1. Проверка DNS резолвинга
+        loop = asyncio.get_event_loop()
+        ip_list = await loop.run_in_executor(
+            None, lambda: socket.gethostbyname_ex(host)[2]
+        )
+        if not ip_list:
+            return False
+
+        # 2. Проверка TCP сокета
+        target_ip = ip_list[0]
         _, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), 
+            asyncio.open_connection(target_ip, port), 
             timeout=timeout
         )
         writer.close()
@@ -75,39 +102,33 @@ async def fetch_all_keys() -> list[str]:
                 ]
                 all_keys.extend(valid_keys)
             except Exception as e:
-                print(f"[ERROR] VLESS Scraper: {e}")
+                print(f"[ERROR] Scraper fetch: {e}")
                 continue
     return all_keys
 
 async def get_free_v2ray_config(country_code: str = None) -> str | None:
-    """Отбирает ключи и проверяет их доступность перед выдачей."""
+    """Ищет живой ключ с проверкой сокета и настройкой DNS."""
     keys = await fetch_all_keys()
     if not keys:
         return None
 
-    candidate_keys = []
-    if country_code and country_code in COUNTRY_PATTERNS:
-        patterns = COUNTRY_PATTERNS[country_code]
-        for key in keys:
-            hashtag = key.split("#")[-1].lower() if "#" in key else ""
-            for pattern in patterns:
-                if re.search(pattern, hashtag, re.IGNORECASE):
-                    candidate_keys.append(key)
-                    break
-
-    if not candidate_keys:
-        candidate_keys = keys
+    # Приоритет VLESS ключам (они работают лучше всего)
+    vless_keys = [k for k in keys if k.startswith("vless://")]
+    candidate_keys = vless_keys if vless_keys else keys
 
     random.shuffle(candidate_keys)
     
-    for key in candidate_keys[:15]:
-        host, port = parse_host_and_port(key)
+    # Проверяем первые 20 кандидатов на доступность и DNS
+    for raw_key in candidate_keys[:20]:
+        host, port = parse_host_and_port(raw_key)
         if host and port:
-            is_alive = await check_node_alive(host, port)
+            is_alive = await check_node_dns_and_socket(host, port)
             if is_alive:
-                return key
+                # Оптимизируем ключ под DNS 1.1.1.1
+                return optimize_key_dns(raw_key)
 
+    # Запасной вариант
     if candidate_keys:
-        return random.choice(candidate_keys)
+        return optimize_key_dns(random.choice(candidate_keys))
     
     return None

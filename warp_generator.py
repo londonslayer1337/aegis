@@ -1,4 +1,5 @@
 import base64
+import base64
 import random
 import httpx
 from cryptography.hazmat.primitives.asymmetric import x25519
@@ -9,21 +10,22 @@ HEADERS = {
     "Content-Type": "application/json; charset=UTF-8"
 }
 
+# Приоритетные IP из диапазона 188.114.x.x, которые лучше всего проходят ТСПУ
 COUNTRY_ENDPOINTS = {
     "de": {
         "name": "🇩🇪 Германия",
         "clean_ips": [
-            "162.159.192.1", "162.159.192.2", "162.159.192.3", "162.159.192.4", "162.159.192.5",
-            "162.159.192.8", "162.159.192.10", "162.159.193.1", "162.159.193.2", "162.159.193.3",
-            "162.159.193.4", "162.159.193.5", "162.159.193.8", "162.159.193.10"
+            "188.114.96.1", "188.114.96.2", "188.114.96.3", "188.114.96.4", "188.114.96.5",
+            "188.114.96.8", "188.114.96.10", "188.114.97.1", "188.114.97.2", "188.114.97.3",
+            "188.114.97.4", "188.114.97.5", "188.114.97.8", "188.114.97.10"
         ]
     },
     "nl": {
         "name": "🇳🇱 Нидерланды",
         "clean_ips": [
-            "188.114.96.1", "188.114.96.2", "188.114.96.3", "188.114.96.4", "188.114.96.5",
-            "188.114.96.8", "188.114.96.10", "188.114.97.1", "188.114.97.2", "188.114.97.3",
-            "188.114.97.4", "188.114.97.5", "188.114.97.8", "188.114.97.10"
+            "188.114.98.1", "188.114.98.2", "188.114.98.3", "188.114.98.4", "188.114.98.5",
+            "188.114.98.8", "188.114.98.10", "188.114.99.1", "188.114.99.2", "188.114.99.3",
+            "188.114.99.4", "188.114.99.5", "188.114.99.8", "188.114.99.10"
         ]
     },
     "us": {
@@ -43,6 +45,8 @@ COUNTRY_ENDPOINTS = {
         ]
     }
 }
+
+WORKING_PORTS = [53, 4500, 1701]
 
 def generate_wg_keys():
     private_key = x25519.X25519PrivateKey.generate()
@@ -83,6 +87,7 @@ async def register_warp_account(country_code="de"):
 
             country_data = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
             ip = random.choice(country_data["clean_ips"])
+            port = random.choice(WORKING_PORTS)
 
             return {
                 "private_key": priv_key,
@@ -90,7 +95,7 @@ async def register_warp_account(country_code="de"):
                 "v4_addr": res["config"]["interface"]["addresses"]["v4"],
                 "v6_addr": res["config"]["interface"]["addresses"]["v6"],
                 "peer_pubkey": res["config"]["peers"][0]["public_key"],
-                "endpoint": f"{ip}:53",
+                "endpoint": f"{ip}:{port}",
                 "country_name": country_data["name"]
             }
         except Exception as e:
@@ -105,10 +110,10 @@ def build_amnezia_wg_config(warp_data):
 PrivateKey = {warp_data['private_key']}
 Address = {warp_data['v4_addr']}, {warp_data['v6_addr']}
 DNS = 1.1.1.1, 1.0.0.1
-MTU = 1220
-Jc = 5
-Jmin = 50
-Jmax = 100
+MTU = 1160
+Jc = 4
+Jmin = 40
+Jmax = 70
 S1 = 15
 S2 = 20
 H1 = 1

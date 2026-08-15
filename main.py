@@ -1,91 +1,76 @@
-import os
 import asyncio
-import logging
-import sys
+import os
+import io
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+from aiogram.filters import CommandStart
 
-from aiogram import Bot, Dispatcher, F
-from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, BotCommand
+from warp_generator import register_warp_account, build_amnezia_wg_config
+from v2ray_generator import get_free_v2ray_config
 
-from warp_generator import register_warp_account, build_amnezia_wg_config, COUNTRY_ENDPOINTS
+TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
-TOKEN = os.getenv("BOT_TOKEN")
+bot = Bot(token=TOKEN)
 dp = Dispatcher()
+router = Router()
 
-def get_country_keyboard():
-    buttons = []
-    for code, info in COUNTRY_ENDPOINTS.items():
-        buttons.append([InlineKeyboardButton(text=f"🌐 {info['name']}", callback_data=f"gen_{code}")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-@dp.message(CommandStart())
-@dp.message(Command("warp"))
-async def command_warp_handler(message: Message):
-    text = (
-        "⚡ <b>AmneziaWG (WARP) Generator</b> ⚡\n\n"
-        "Этот бот создаст индивидуальный профиль для обхода блокировок и ускорения YouTube / Roblox.\n\n"
-        "👇 <b>Выберите страну для подключения:</b>"
-    )
-    await message.answer(text, reply_markup=get_country_keyboard(), parse_mode=ParseMode.HTML)
-
-@dp.callback_query(F.data.startswith("gen_"))
-async def generate_warp_callback(callback: CallbackQuery):
-    country_code = callback.data.split("_")[1]
-    country_name = COUNTRY_ENDPOINTS.get(country_code, {}).get("name", "выбранную страну")
-
-    await callback.answer(f"⏳ Генерирую конфиг ({country_name})...", show_alert=False)
-    
-    await callback.message.edit_text(
-        f"🔄 <b>Запрос к Cloudflare API ({country_name})...</b>\nПожалуйста, подождите 2–3 секунды.",
-        parse_mode=ParseMode.HTML
-    )
-
-    warp_data = await register_warp_account(country_code)
-
-    if not warp_data:
-        await callback.message.edit_text(
-            "❌ <b>Ошибка при генерации!</b>\n\nНе удалось зарегистрировать профиль. Попробуйте ещё раз через команду /warp.",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    config_content = build_amnezia_wg_config(warp_data)
-    file_bytes = config_content.encode("utf-8")
-    input_file = BufferedInputFile(file_bytes, filename=f"AmneziaWG_{country_code.upper()}.conf")
-
-    await callback.message.delete()
-    
-    caption_text = (
-        f"✅ <b>Конфигурация успешно создана!</b>\n\n"
-        f"📍 <b>Локация:</b> {warp_data['country_name']}\n"
-        f"🔌 <b>Clean Endpoint:</b> <code>{warp_data['endpoint']}</code>\n"
-        f"🛡️ <b>Протокол:</b> AmneziaWG (DPI Protection)\n\n"
-        f"💡 <b>Инструкция:</b>\n"
-        f"1. Скачайте файл <code>AmneziaWG_{country_code.upper()}.conf</code> ниже.\n"
-        f"2. Импортируйте его в приложение <b>AmneziaWG</b>.\n"
-        f"3. Включите туннель и наслаждайтесь!\n\n"
-        f"🔄 Для повторного выбора страны используйте /warp"
-    )
-
-    await callback.message.answer_document(
-        document=input_file,
-        caption=caption_text,
-        parse_mode=ParseMode.HTML
-    )
-
-async def main():
-    if not TOKEN:
-        print("Ошибка: Переменная BOT_TOKEN не найдена!")
-        return
-    bot = Bot(token=TOKEN)
-
-    await bot.set_my_commands([
-        BotCommand(command="warp", description="⚡ Сгенерировать AmneziaWG конфиг"),
+def get_main_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛡 Получить AmneziaWG (WARP)", callback_data="get_warp")],
+        [InlineKeyboardButton(text="⚡ Получить VLESS / Happ ключ", callback_data="get_vless")]
     ])
 
+@router.message(CommandStart())
+async def start_cmd(message: Message):
+    await message.answer(
+        "👋 **Привет!** Выбери нужный тип VPN подключения:\n\n"
+        "• **AmneziaWG**: Конфиг-файл для приложения AmneziaWG.\n"
+        "• **VLESS / Happ**: Строка-ключ для приложений Happ, v2rayNG, NekoBox.",
+        reply_markup=get_main_keyboard(),
+        parse_mode="Markdown"
+    )
+
+@router.callback_query(F.data == "get_warp")
+async def handle_warp(callback: CallbackQuery):
+    await callback.message.answer("⚙️ Генерирую AmneziaWG профиль...")
+    
+    warp_data = await register_warp_account("de")
+    config_text = build_amnezia_wg_config(warp_data)
+    
+    file_bytes = config_text.encode("utf-8")
+    input_file = BufferedInputFile(file_bytes, filename="AmneziaWARP.conf")
+    
+    await callback.message.answer_document(
+        document=input_file,
+        caption="✅ **Твой AmneziaWG конфиг готов!**\nИмпортируй файл в приложение AmneziaWG.",
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "get_vless")
+async def handle_vless(callback: CallbackQuery):
+    await callback.message.answer("🔎 Ищу рабочий VLESS ключ...")
+    
+    key = await get_free_v2ray_config()
+    
+    if key:
+        msg = (
+            "✅ **Твой VLESS / Xray ключ:**\n\n"
+            f"`{key}`\n\n"
+            "📌 **Инструкция:**\n"
+            "1. Скопируй ключ нажатием на него.\n"
+            "2. Открой **Happ** или **v2rayNG**.\n"
+            "3. Нажми кнопку **Импорт из буфера обмена**."
+        )
+        await callback.message.answer(msg, parse_mode="Markdown")
+    else:
+        await callback.message.answer("❌ Не удалось получить ключ. Попробуй еще раз через минуту.")
+        
+    await callback.answer()
+
+async def main():
+    dp.include_router(router)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
     asyncio.run(main())

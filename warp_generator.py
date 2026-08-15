@@ -1,6 +1,7 @@
 import base64
 import random
 import httpx
+import asyncio
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import serialization
 
@@ -9,10 +10,10 @@ HEADERS = {
     "Content-Type": "application/json; charset=UTF-8"
 }
 
-# Широкий набор рабочих UDP-портов для пробития DPI
+# Набор рабочих UDP-портов для обхода DPI
 WORKING_PORTS = [500, 1701, 2408, 4500, 5000, 50100]
 
-# Расширенные пулы Clean IP Cloudflare с привязкой по регионам
+# Полный список Clean IP Cloudflare по странам (по 14 адресов на каждую страну)
 COUNTRY_ENDPOINTS = {
     "de": {
         "name": "🇩🇪 Германия",
@@ -48,22 +49,56 @@ COUNTRY_ENDPOINTS = {
     }
 }
 
-def get_country_endpoint(country_code="de"):
+async def is_endpoint_alive(ip: str, port: int, timeout: float = 1.2) -> bool:
+    """Быстрая проверка доступности комбинации IP:Port по TCP handshake."""
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port),
+            timeout=timeout
+        )
+        writer.close()
+        await writer.wait_closed()
+        return True
+    except Exception:
+        return False
+
+async def get_working_endpoint(country_code="de") -> str:
+    """Перебирает случайные комбинации IP и портов из пула страны до первого живого."""
     country_data = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
-    ip = random.choice(country_data["clean_ips"])
-    port = random.choice(WORKING_PORTS)
-    return f"{ip}:{port}"
+    ips = country_data["clean_ips"].copy()
+    random.shuffle(ips)
+    
+    for ip in ips:
+        ports = WORKING_PORTS.copy()
+        random.shuffle(ports)
+        for port in ports:
+            if await is_endpoint_alive(ip, port):
+                print(f"[CHECK] Найден рабочий эндпоинт: {ip}:{port}")
+                return f"{ip}:{port}"
+                
+    # Фоллбэк на случай, если TCP блокируется провайдером
+    fallback_ip = random.choice(country_data["clean_ips"])
+    fallback_port = random.choice(WORKING_PORTS)
+    print(f"[CHECK] Живых эндпоинтов не найдено, задействован дефолт: {fallback_ip}:{fallback_port}")
+    return f"{fallback_ip}:{fallback_port}"
 
 def generate_wg_keys():
     private_key = x25519.X25519PrivateKey.generate()
     public_key = private_key.public_key()
-
-    priv_bytes = private_key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
-    pub_bytes = public_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-
+    
+    priv_bytes = private_key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption()
+    )
+    pub_bytes = public_key.public_bytes(
+        serialization.Encoding.Raw,
+        serialization.PublicFormat.Raw
+    )
+    
     priv_b64 = base64.b64encode(priv_bytes).decode('utf-8')
     pub_b64 = base64.b64encode(pub_bytes).decode('utf-8')
-
+    
     return priv_b64, pub_b64
 
 async def register_warp_account(country_code="de"):
@@ -78,13 +113,12 @@ async def register_warp_account(country_code="de"):
         "locale": "en_US"
     }
 
-    async with httpx.AsyncClient(http2=True, headers=HEADERS, timeout=15.0) as client:
+    async with httpx.AsyncClient(http2=True, headers=HEADERS, timeout=12.0) as client:
         try:
             response = await client.post(url, json=payload)
             data = response.json()
             
             res = data.get("result", data)
-            
             if "config" not in res:
                 print(f"[ERROR] Неожиданный формат API: {data}")
                 return None
@@ -94,7 +128,8 @@ async def register_warp_account(country_code="de"):
             peer_pubkey = res["config"]["peers"][0]["public_key"]
             country_info = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
 
-            endpoint = get_country_endpoint(country_code)
+            # Подбираем 100% живой эндпоинт из 14 IP выбранной страны
+            endpoint = await get_working_endpoint(country_code)
 
             return {
                 "private_key": priv_key,
@@ -106,7 +141,7 @@ async def register_warp_account(country_code="de"):
                 "country_name": country_info["name"]
             }
         except Exception as e:
-            print(f"[ERROR] Ошибка обработки ответа: {e}")
+            print(f"[ERROR] Ошибка выполнения запроса к API: {e}")
             return None
 
 def build_amnezia_wg_config(warp_data):

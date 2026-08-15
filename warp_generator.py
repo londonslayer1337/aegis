@@ -22,31 +22,35 @@ COUNTRY_ENDPOINTS = {
     },
     "nl": {
         "name": "🇳🇱 Нидерланды",
-        "clean_ips": [
-            "188.114.98.1", "188.114.98.2", "188.114.98.3", "188.114.98.4", "188.114.98.5",
-            "188.114.98.8", "188.114.98.10", "188.114.99.1", "188.114.99.2", "188.114.99.3",
-            "188.114.99.4", "188.114.99.5", "188.114.99.8", "188.114.99.10"
-        ]
+import base64
+import random
+import httpx
+from cryptography.hazmat.primitives.asymmetric import x25519
+from cryptography.hazmat.primitives import serialization
+
+HEADERS = {
+    "User-Agent": "okhttp/3.12.1",
+    "Content-Type": "application/json; charset=UTF-8"
+}
+
+COUNTRY_ENDPOINTS = {
+    "de": {
+        "name": "🇩🇪 Германия",
+        "clean_ips": ["162.159.192.1", "162.159.192.2", "188.114.96.1", "188.114.96.2"]
+    },
+    "nl": {
+        "name": "🇳🇱 Нидерланды",
+        "clean_ips": ["188.114.98.1", "188.114.98.2", "188.114.99.1", "188.114.99.2"]
     },
     "us": {
         "name": "🇺🇸 США",
-        "clean_ips": [
-            "162.159.195.1", "162.159.195.2", "162.159.195.3", "162.159.195.4", "162.159.195.5",
-            "162.159.195.8", "162.159.195.10", "162.159.196.1", "162.159.196.2", "162.159.196.3",
-            "162.159.196.4", "162.159.196.5", "162.159.196.8", "162.159.196.10"
-        ]
+        "clean_ips": ["162.159.195.1", "162.159.195.2", "162.159.196.1", "162.159.196.2"]
     },
     "jp": {
         "name": "🇯🇵 Япония",
-        "clean_ips": [
-            "162.159.194.1", "162.159.194.2", "162.159.194.3", "162.159.194.4", "162.159.194.5",
-            "162.159.194.8", "162.159.194.10", "162.159.197.1", "162.159.197.2", "162.159.197.3",
-            "162.159.197.4", "162.159.197.5", "162.159.197.8", "162.159.197.10"
-        ]
+        "clean_ips": ["162.159.194.1", "162.159.194.2", "162.159.197.1", "162.159.197.2"]
     }
 }
-
-WORKING_PORTS = [53, 4500, 1701]
 
 def generate_wg_keys():
     private_key = x25519.X25519PrivateKey.generate()
@@ -86,40 +90,64 @@ async def register_warp_account(country_code="de"):
                 return None
 
             country_data = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
-            ip = random.choice(country_data["clean_ips"])
-            port = random.choice(WORKING_PORTS)
+            clean_ip = random.choice(country_data["clean_ips"])
 
             return {
                 "private_key": priv_key,
-                "public_key": pub_key,
                 "v4_addr": res["config"]["interface"]["addresses"]["v4"],
                 "v6_addr": res["config"]["interface"]["addresses"]["v6"],
                 "peer_pubkey": res["config"]["peers"][0]["public_key"],
-                "endpoint": f"{ip}:{port}",
+                "endpoint": f"{clean_ip}:4500",
                 "country_name": country_data["name"]
             }
         except Exception as e:
-            print(f"[ERROR] API Error: {e}")
+            print(f"[ERROR] WARP Reg API: {e}")
             return None
 
 def build_amnezia_wg_config(warp_data):
     if not warp_data: 
-        return None
-        
-    return f"""[Interface]
-PrivateKey = {warp_data['private_key']}
-Address = {warp_data['v4_addr']}, {warp_data['v6_addr']}
-DNS = 1.1.1.1, 1.0.0.1
-MTU = 1160
-Jc = 4
-Jmin = 40
-Jmax = 70
-S1 = 15
-S2 = 20
+        return """[Interface]
+PrivateKey = igicLUcfe9iVboyeYKR2glpknXjLw/GCH/19OjEe7LA=
+Address = 172.16.0.2, 2606:4700:110:8947:acff:f920:abc6:9741
+DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001
+MTU = 1280
+Jc = 19
+Jmin = 76
+Jmax = 322
+S1 = 0
+S2 = 0
+S3 = 0
+S4 = 0
 H1 = 1
 H2 = 2
 H3 = 3
 H4 = 4
+I1 = <b 0x000100602112a442ff28ec860ce31adf94cf190b80220006706a6e617468000000060015313839343237343137323a436d42325a3246795977000000002400047d73d4d4802a0008a3b15ee41d3ecabc00250000002600148972b9890cdb1001c1ce2f8be724c92ad8c88c1a802800045e24362a>
+
+[Peer]
+PublicKey = bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=
+AllowedIPs = 0.0.0.0/0
+Endpoint = engage.cloudflareclient.com:4500
+PersistentKeepalive = 25
+"""
+
+    return f"""[Interface]
+PrivateKey = {warp_data['private_key']}
+Address = {warp_data['v4_addr']}, {warp_data['v6_addr']}
+DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001
+MTU = 1280
+Jc = 19
+Jmin = 76
+Jmax = 322
+S1 = 0
+S2 = 0
+S3 = 0
+S4 = 0
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+I1 = <b 0x000100602112a442ff28ec860ce31adf94cf190b80220006706a6e617468000000060015313839343237343137323a436d42325a3246795977000000002400047d73d4d4802a0008a3b15ee41d3ecabc00250000002600148972b9890cdb1001c1ce2f8be724c92ad8c88c1a802800045e24362a>
 
 [Peer]
 PublicKey = {warp_data['peer_pubkey']}

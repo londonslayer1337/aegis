@@ -8,11 +8,12 @@ HEADERS = {
     "Content-Type": "application/json; charset=UTF-8"
 }
 
+# Используем проверенные Clean IP от Cloudflare, которые пробивают блокировки
 COUNTRY_ENDPOINTS = {
-    "de": {"name": "🇩🇪 Германия", "endpoint": "162.159.192.1:2408"},
-    "nl": {"name": "🇳🇱 Нидерланды", "endpoint": "162.159.193.1:2408"},
-    "us": {"name": "🇺🇸 США", "endpoint": "162.159.195.1:2408"},
-    "jp": {"name": "🇯🇵 Япония", "endpoint": "162.159.194.1:2408"}
+    "de": {"name": "🇩🇪 Германия", "endpoint": "188.114.96.1:2408"},
+    "nl": {"name": "🇳🇱 Нидерланды", "endpoint": "188.114.97.1:2408"},
+    "us": {"name": "🇺🇸 США", "endpoint": "162.159.193.10:2408"},
+    "jp": {"name": "🇯🇵 Япония", "endpoint": "162.159.192.10:2408"}
 }
 
 def generate_wg_keys():
@@ -46,7 +47,6 @@ async def register_warp_account(country_code="de"):
             response = await client.post(url, json=payload)
             data = response.json()
             
-            # Поддержка ответов с ключом 'result' и без него
             res = data.get("result", data)
             
             if "config" not in res:
@@ -75,12 +75,13 @@ def build_amnezia_wg_config(warp_data):
     if not warp_data: 
         return None
         
+    # Рабочие параметры зашумления для пробития DPI (Jc/Jmin/Jmax/H1-H4)
     return f"""[Interface]
 PrivateKey = {warp_data['private_key']}
 Address = {warp_data['v4_addr']}/32, {warp_data['v6_addr']}/128
 DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111
 
-Jc = 4
+Jc = 120
 Jmin = 40
 Jmax = 70
 S1 = 0

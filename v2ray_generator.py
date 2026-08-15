@@ -24,16 +24,13 @@ def parse_host_and_port(key: str) -> tuple[str | None, int | None]:
     """Извлекает IP/домен и порт из VLESS, VMess, Trojan, SS ссылок."""
     try:
         if key.startswith("vmess://"):
-            # VMess ключи обычно запакованы в base64 json
             b64_data = key.replace("vmess://", "")
-            # Добавляем паддинг
             b64_data += "=" * ((4 - len(b64_data) % 4) % 4)
             decoded = base64.b64decode(b64_data).decode('utf-8', errors='ignore')
             import json
             data = json.loads(decoded)
             return data.get("add"), int(data.get("port", 443))
         else:
-            # Для vless://, trojan://, ss://
             parsed = urlparse(key)
             host = parsed.hostname
             port = parsed.port or (443 if parsed.scheme in ["vless", "trojan"] else 80)
@@ -88,7 +85,6 @@ async def get_free_v2ray_config(country_code: str = None) -> str | None:
     if not keys:
         return None
 
-    # Фильтрация по стране, если передана
     candidate_keys = []
     if country_code and country_code in COUNTRY_PATTERNS:
         patterns = COUNTRY_PATTERNS[country_code]
@@ -102,10 +98,8 @@ async def get_free_v2ray_config(country_code: str = None) -> str | None:
     if not candidate_keys:
         candidate_keys = keys
 
-    # Перемешиваем и проверяем случайные ключи на живой TCP-сокет
     random.shuffle(candidate_keys)
     
-    # Проверяем первые 15 кандидатов, чтобы не заставлять пользователя долго ждать
     for key in candidate_keys[:15]:
         host, port = parse_host_and_port(key)
         if host and port:
@@ -113,6 +107,7 @@ async def get_free_v2ray_config(country_code: str = None) -> str | None:
             if is_alive:
                 return key
 
-    # Если среди проверенных никто не ответил, возвращаем случайный из кандидатов
-    return random.choice(candidate_keys) if candidate_keys
-    s else None
+    if candidate_keys:
+        return random.choice(candidate_keys)
+    
+    return None

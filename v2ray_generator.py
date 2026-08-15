@@ -10,7 +10,6 @@ VLESS_SUBSCRIPTION_URLS = [
     "https://raw.githubusercontent.com/v2raywg/v2ray/main/v2ray"
 ]
 
-# Словарик для поиска страны в хэштегах ключей
 COUNTRY_PATTERNS = {
     "de": [r"germany", r"de", r"🇩🇪", r"германия"],
     "nl": [r"netherlands", r"dutch", r"nl", r"🇳🇱", r"нидерланды"],
@@ -19,7 +18,6 @@ COUNTRY_PATTERNS = {
 }
 
 async def fetch_all_keys() -> list[str]:
-    """Скачивает и декодирует все ключи из подписок."""
     all_keys = []
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         for url in VLESS_SUBSCRIPTION_URLS:
@@ -46,23 +44,16 @@ async def fetch_all_keys() -> list[str]:
     return all_keys
 
 async def get_free_v2ray_config(country_code: str = None) -> str | None:
-    """
-    Возвращает ключ с фильтрацией по стране (de, nl, us, jp).
-    Если страна не указана или не найдена — отдаёт случайный ключ.
-    """
     keys = await fetch_all_keys()
     if not keys:
         return None
 
-    # Если страна запрошена
     if country_code and country_code in COUNTRY_PATTERNS:
         patterns = COUNTRY_PATTERNS[country_code]
         matched_keys = []
 
         for key in keys:
-            # Ищем совпадения в хэштеге ключа (всё что после '#')
             hashtag = key.split("#")[-1].lower() if "#" in key else ""
-            
             for pattern in patterns:
                 if re.search(pattern, hashtag, re.IGNORECASE):
                     matched_keys.append(key)
@@ -71,6 +62,4 @@ async def get_free_v2ray_config(country_code: str = None) -> str | None:
         if matched_keys:
             return random.choice(matched_keys)
 
-    # Если под конкретную страну ничего не нашлось или страна не передана — рандом
-    return random.choi
-ce(keys)
+    return random.choice(keys)

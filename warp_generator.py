@@ -1,35 +1,11 @@
-import os
-import base64
-import requests
-from cryptography.hazmat.primitives.asymmetric import x25519
-from cryptography.hazmat.primitives import serialization
-
-# Список надежных публичных HTTP/SOCKS5 прокси для обхода Cloudflare-блокировок Railway
-FALLBACK_PROXIES = [
-    "http://185.199.229.156:7492",
-    "http://43.167.165.123:10808",
-    "socks5://185.230.125.101:1080",
-    "http://103.152.112.162:80"
-]
-
-COUNTRY_ENDPOINTS = {
-    "de": {"name": "🇩🇪 Германия", "endpoint": "162.159.192.1:2408"},
-    "nl": {"name": "🇳🇱 Нидерланды", "endpoint": "162.159.193.1:2408"},
-    "us": {"name": "🇺🇸 США", "endpoint": "162.159.195.1:2408"},
-    "jp": {"name": "🇯🇵 Япония", "endpoint": "162.159.194.1:2408"}
-}
-import os
 import base64
 import httpx
-import asyncio
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import serialization
 
-# Заголовок, который использует реальное приложение WARP на Android
 HEADERS = {
     "User-Agent": "okhttp/3.12.1",
-    "Content-Type": "application/json; charset=UTF-8",
-    "CF-Client-Version": "a-6.15-2408271300" 
+    "Content-Type": "application/json; charset=UTF-8"
 }
 
 COUNTRY_ENDPOINTS = {
@@ -65,25 +41,21 @@ async def register_warp_account(country_code="de"):
         "locale": "en_US"
     }
 
-    # Используем httpx с http2=True (эмуляция браузера/приложения)
     async with httpx.AsyncClient(http2=True, headers=HEADERS, timeout=15.0) as client:
         try:
             response = await client.post(url, json=payload)
-            
-            # ВАЖНО: Если код не 200, выводим всё в логи, чтобы понять причину
-            if response.status_code != 200:
-                print(f"[DEBUG ERROR] Статус: {response.status_code}, Ответ: {response.text}")
-                return None
-            
             data = response.json()
             
-            if "result" not in data:
-                print(f"[ERROR] Нет ключа 'result' в ответе: {data}")
+            # Поддержка ответов с ключом 'result' и без него
+            res = data.get("result", data)
+            
+            if "config" not in res:
+                print(f"[ERROR] Неожиданный формат API: {data}")
                 return None
 
-            v4_addr = data["result"]["config"]["interface"]["addresses"]["v4"]
-            v6_addr = data["result"]["config"]["interface"]["addresses"]["v6"]
-            peer_pubkey = data["result"]["config"]["peers"][0]["public_key"]
+            v4_addr = res["config"]["interface"]["addresses"]["v4"]
+            v6_addr = res["config"]["interface"]["addresses"]["v6"]
+            peer_pubkey = res["config"]["peers"][0]["public_key"]
             country_info = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
 
             return {
@@ -96,11 +68,13 @@ async def register_warp_account(country_code="de"):
                 "country_name": country_info["name"]
             }
         except Exception as e:
-            print(f"[ERROR] Исключение при запросе: {e}")
+            print(f"[ERROR] Ошибка обработки ответа: {e}")
             return None
 
 def build_amnezia_wg_config(warp_data):
-    if not warp_data: return None
+    if not warp_data: 
+        return None
+        
     return f"""[Interface]
 PrivateKey = {warp_data['private_key']}
 Address = {warp_data['v4_addr']}/32, {warp_data['v6_addr']}/128
@@ -121,4 +95,3 @@ PublicKey = {warp_data['peer_pubkey']}
 Endpoint = {warp_data['endpoint']}
 AllowedIPs = 0.0.0.0/0, ::/0
 """
-

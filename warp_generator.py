@@ -1,27 +1,4 @@
 import base64
-import httpx
-from cryptography.hazmat.primitives.asymmetric import x25519
-from cryptography.hazmat.primitives import serialization
-
-HEADERS = {
-    "User-Agent": "okhttp/3.12.1",
-    "Content-Type": "application/json; charset=UTF-8"
-}
-
-# Используем эндпоинты Cloudflare с портом 4500 (как в рабочем примере)
-COUNTRY_ENDPOINTS = {
-    "de": {"name": "🇩🇪 Германия", "endpoint": "engage.cloudflareclient.com:4500"},
-    "nl": {"name": "🇳🇱 Нидерланды", "endpoint": "162.159.192.1:4500"},
-    "us": {"name": "🇺🇸 США", "endpoint": "162.159.193.1:4500"},
-    "jp": {"name": "🇯🇵 Япония", "endpoint": "162.159.194.1:4500"}
-}
-
-def generate_wg_keys():
-    private_key = x25519.X25519PrivateKey.generate()
-    public_key = private_key.public_key()
-    priv_bytes = private_key.private_bytes(
-        encoding=serialization.Encoding.Raw,
-import base64
 import random
 import httpx
 from cryptography.hazmat.primitives.asymmetric import x25519
@@ -35,7 +12,7 @@ HEADERS = {
 # Широкий набор рабочих UDP-портов для пробития DPI
 WORKING_PORTS = [500, 1701, 2408, 4500, 5000, 50100]
 
-# Расширенные пулы Anycast Clean IP Cloudflare с привязкой по регионам дата-центров
+# Расширенные пулы Clean IP Cloudflare с привязкой по регионам
 COUNTRY_ENDPOINTS = {
     "de": {
         "name": "🇩🇪 Германия",
@@ -80,16 +57,14 @@ def get_country_endpoint(country_code="de"):
 def generate_wg_keys():
     private_key = x25519.X25519PrivateKey.generate()
     public_key = private_key.public_key()
-    priv_bytes = private_key.private_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PrivateFormat.Raw,
-        encryption_algorithm=serialization.NoEncryption()
-    )
-    pub_bytes = public_key.public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw
-    )
-    return base64.b64encode(priv_bytes).decode('utf-8'), base64.b64encode(pub_bytes).decode('utf-8')
+
+    priv_bytes = private_key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+    pub_bytes = public_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+    priv_b64 = base64.b64encode(priv_bytes).decode('utf-8')
+    pub_b64 = base64.b64encode(pub_bytes).decode('utf-8')
+
+    return priv_b64, pub_b64
 
 async def register_warp_account(country_code="de"):
     priv_key, pub_key = generate_wg_keys()
@@ -119,7 +94,6 @@ async def register_warp_account(country_code="de"):
             peer_pubkey = res["config"]["peers"][0]["public_key"]
             country_info = COUNTRY_ENDPOINTS.get(country_code, COUNTRY_ENDPOINTS["de"])
 
-            # Случайная генерация комбинации IP:Port из глубокого пула выбранной страны
             endpoint = get_country_endpoint(country_code)
 
             return {

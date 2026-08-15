@@ -1,12 +1,12 @@
 import base64
 import random
 import httpx
-import re
 import asyncio
 import socket
+import json
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
-# Проверенные динамические подписки VLESS / WARP / Xray
+# Проверенные динамические подписки VLESS / VMess / Trojan / SS
 VLESS_SUBSCRIPTION_URLS = [
     "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/All_Configs_Sub.txt",
     "https://raw.githubusercontent.com/freefq/free/master/v2",
@@ -16,13 +16,12 @@ VLESS_SUBSCRIPTION_URLS = [
 ]
 
 def parse_host_and_port(key: str) -> tuple[str | None, int | None]:
-    """Извлекает IP/домен и порт из ссылки VLESS / VMess / Trojan / SS."""
+    """Извлекает хост (IP/домен) и порт из ключа."""
     try:
         if key.startswith("vmess://"):
             b64_data = key.replace("vmess://", "")
             b64_data += "=" * ((4 - len(b64_data) % 4) % 4)
             decoded = base64.b64decode(b64_data).decode('utf-8', errors='ignore')
-            import json
             data = json.loads(decoded)
             return data.get("add"), int(data.get("port", 443))
         else:
@@ -34,7 +33,11 @@ def parse_host_and_port(key: str) -> tuple[str | None, int | None]:
         return None, None
 
 def optimize_key_dns(key: str) -> str:
-    """Исправляет параметры ключа, настраивая чистый DNS (1.1.1.1) и убирает конфликты."""
+    """
+    Удаляет встроенные параметры DNS из VLESS-ссылки.
+    Это заставляет V2Ray-клиенты использовать системный DNS телефона
+    (например, задействовать 'Частный DNS' из настроек Android).
+    """
     try:
         if not key.startswith("vless://"):
             return key
@@ -42,12 +45,9 @@ def optimize_key_dns(key: str) -> str:
         parsed = urlparse(key)
         query_params = parse_qs(parsed.query)
         
-        # Настройка параметров для обхода блокировок и чистого DNS
-        query_params['dns'] = ['1.1.1.1']
-        
-        # Если в ключе нет зашифрованного SNI, ставим стандартный TLS/Cloudflare
-        if 'security' not in query_params:
-            query_params['security'] = ['tls']
+        # Удаляем переопределение DNS, чтобы использовался системный DNS устройства
+        if 'dns' in query_params:
+            del query_params['dns']
             
         new_query = urlencode(query_params, doseq=True)
         new_parsed = parsed._replace(query=new_query)
@@ -56,19 +56,19 @@ def optimize_key_dns(key: str) -> str:
         return key
 
 async def check_node_dns_and_socket(host: str, port: int, timeout: float = 2.0) -> bool:
-    """Проверяет DNS-резолв и делает активное TCP-рукопожатие с узлом."""
+    """Проверяет возможность резолва хоста и проверяет активный TCP-сокет."""
     if not host or not port:
         return False
     try:
-        # 1. Проверка DNS резолвинга
         loop = asyncio.get_event_loop()
+        # 1. Проверка DNS-резолва хоста
         ip_list = await loop.run_in_executor(
             None, lambda: socket.gethostbyname_ex(host)[2]
         )
         if not ip_list:
             return False
 
-        # 2. Проверка TCP сокета
+        # 2. Проверка активного TCP сокета
         target_ip = ip_list[0]
         _, writer = await asyncio.wait_for(
             asyncio.open_connection(target_ip, port), 
@@ -81,6 +81,7 @@ async def check_node_dns_and_socket(host: str, port: int, timeout: float = 2.0) 
         return False
 
 async def fetch_all_keys() -> list[str]:
+    """Скачивает и декодирует списки ключей из источников."""
     all_keys = []
     async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
         for url in VLESS_SUBSCRIPTION_URLS:
@@ -102,33 +103,36 @@ async def fetch_all_keys() -> list[str]:
                 ]
                 all_keys.extend(valid_keys)
             except Exception as e:
-                print(f"[ERROR] Scraper fetch: {e}")
+                print(f"[ERROR] Scraper fetch error: {e}")
                 continue
     return all_keys
 
 async def get_free_v2ray_config(country_code: str = None) -> str | None:
-    """Ищет живой ключ с проверкой сокета и настройкой DNS."""
+    """
+    Основная функция для бота: получает ключи, ищет рабочий через проверку сокета
+    и возвращает оптимизированную ссылку под системный DNS.
+    """
     keys = await fetch_all_keys()
     if not keys:
         return None
 
-    # Приоритет VLESS ключам (они работают лучше всего)
+    # Приоритет отдается VLESS ключам
     vless_keys = [k for k in keys if k.startswith("vless://")]
     candidate_keys = vless_keys if vless_keys else keys
 
     random.shuffle(candidate_keys)
     
-    # Проверяем первые 20 кандидатов на доступность и DNS
+    # Проверяем первые 20 кандидатов
     for raw_key in candidate_keys[:20]:
         host, port = parse_host_and_port(raw_key)
         if host and port:
             is_alive = await check_node_dns_and_socket(host, port)
             if is_alive:
-                # Оптимизируем ключ под DNS 1.1.1.1
                 return optimize_key_dns(raw_key)
 
-    # Запасной вариант
+    # Запасной вариант, если сокет-тест не прошёл у первых 20
     if candidate_keys:
         return optimize_key_dns(random.choice(candidate_keys))
+        
     
     return None

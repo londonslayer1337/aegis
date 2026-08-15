@@ -1,9 +1,8 @@
 import asyncio
 import os
-import io
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
-from aiogram.filters import CommandStart
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, BotCommand
+from aiogram.filters import CommandStart, Command
 
 from warp_generator import register_warp_account, build_amnezia_wg_config
 from v2ray_generator import get_free_v2ray_config
@@ -20,6 +19,13 @@ def get_main_keyboard():
         [InlineKeyboardButton(text="⚡ Получить VLESS / Happ ключ", callback_data="get_vless")]
     ])
 
+async def set_bot_commands(bot: Bot):
+    commands = [
+        BotCommand(command="start", description="Главное меню / Перезапуск"),
+        BotCommand(command="vless", description="Получить свежий VLESS ключ")
+    ]
+    await bot.set_my_commands(commands)
+
 @router.message(CommandStart())
 async def start_cmd(message: Message):
     await message.answer(
@@ -29,6 +35,24 @@ async def start_cmd(message: Message):
         reply_markup=get_main_keyboard(),
         parse_mode="Markdown"
     )
+
+@router.message(Command("vless"))
+async def vless_cmd(message: Message):
+    status_msg = await message.answer("🔎 Ищу рабочий VLESS ключ...")
+    key = await get_free_v2ray_config()
+    
+    if key:
+        msg = (
+            "✅ **Твой VLESS / Xray ключ:**\n\n"
+            f"`{key}`\n\n"
+            "📌 **Инструкция:**\n"
+            "1. Нажмите на ключ, чтобы скопировать.\n"
+            "2. Откройте **Happ**, **v2rayNG** или **NekoBox**.\n"
+            "3. Нажмите **Импорт из буфера обмена**."
+        )
+        await status_msg.edit_text(msg, parse_mode="Markdown")
+    else:
+        await status_msg.edit_text("❌ Не удалось получить ключ. Попробуйте еще раз позже.")
 
 @router.callback_query(F.data == "get_warp")
 async def handle_warp(callback: CallbackQuery):
@@ -49,8 +73,7 @@ async def handle_warp(callback: CallbackQuery):
 
 @router.callback_query(F.data == "get_vless")
 async def handle_vless(callback: CallbackQuery):
-    await callback.message.answer("🔎 Ищу рабочий VLESS ключ...")
-    
+    status_msg = await callback.message.answer("🔎 Ищу рабочий VLESS ключ...")
     key = await get_free_v2ray_config()
     
     if key:
@@ -58,18 +81,19 @@ async def handle_vless(callback: CallbackQuery):
             "✅ **Твой VLESS / Xray ключ:**\n\n"
             f"`{key}`\n\n"
             "📌 **Инструкция:**\n"
-            "1. Скопируй ключ нажатием на него.\n"
-            "2. Открой **Happ** или **v2rayNG**.\n"
-            "3. Нажми кнопку **Импорт из буфера обмена**."
+            "1. Нажмите на ключ, чтобы скопировать.\n"
+            "2. Откройте **Happ**, **v2rayNG** или **NekoBox**.\n"
+            "3. Нажмите **Импорт из буфера обмена**."
         )
-        await callback.message.answer(msg, parse_mode="Markdown")
+        await status_msg.edit_text(msg, parse_mode="Markdown")
     else:
-        await callback.message.answer("❌ Не удалось получить ключ. Попробуй еще раз через минуту.")
+        await status_msg.edit_text("❌ Не удалось получить ключ. Попробуйте еще раз позже.")
         
     await callback.answer()
 
 async def main():
     dp.include_router(router)
+    await set_bot_commands(bot)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

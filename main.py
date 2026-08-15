@@ -6,7 +6,7 @@ import sys
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
-from aiogram.types import Message, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, BotCommand
 
 from warp_generator import register_warp_account, build_amnezia_wg_config, COUNTRY_ENDPOINTS
 
@@ -36,13 +36,11 @@ async def generate_warp_callback(callback: CallbackQuery):
 
     await callback.answer(f"⏳ Генерирую конфиг ({country_name})...", show_alert=False)
     
-    # Редактируем сообщение, пока идет генерация
     await callback.message.edit_text(
-        f"🔄 <b>Запрос к Cloudflare API...</b>\nПожалуйста, подождите 3–5 секунд.",
+        f"🔄 <b>Запрос к Cloudflare API ({country_name})...</b>\nПожалуйста, подождите 2–3 секунды.",
         parse_mode=ParseMode.HTML
     )
 
-    # Исправленный асинхронный вызов
     warp_data = await register_warp_account(country_code)
 
     if not warp_data:
@@ -56,18 +54,18 @@ async def generate_warp_callback(callback: CallbackQuery):
     file_bytes = config_content.encode("utf-8")
     input_file = BufferedInputFile(file_bytes, filename=f"AmneziaWG_{country_code.upper()}.conf")
 
-    # Удаляем служебное сообщение и отправляем файл
     await callback.message.delete()
     
     caption_text = (
-        f"✅ <b>Конфигурация готова!</b>\n\n"
+        f"✅ <b>Конфигурация успешно создана!</b>\n\n"
         f"📍 <b>Локация:</b> {warp_data['country_name']}\n"
-        f"🛡️ <b>Протокол:</b> AmneziaWG (DPI Protection)\n"
+        f"🔌 <b>Clean Endpoint:</b> <code>{warp_data['endpoint']}</code>\n"
+        f"🛡️ <b>Протокол:</b> AmneziaWG (DPI Protection)\n\n"
         f"💡 <b>Инструкция:</b>\n"
-        f"1. Скачайте файл ниже.\n"
+        f"1. Скачайте файл <code>AmneziaWG_{country_code.upper()}.conf</code> ниже.\n"
         f"2. Импортируйте его в приложение <b>AmneziaWG</b>.\n"
-        f"3. Включите подключение и проверяйте YouTube!\n\n"
-        f"🔄 Для повторной генерации используйте /warp"
+        f"3. Включите туннель и наслаждайтесь!\n\n"
+        f"🔄 Для повторного выбора страны используйте /warp"
     )
 
     await callback.message.answer_document(
@@ -81,6 +79,11 @@ async def main():
         print("Ошибка: Переменная BOT_TOKEN не найдена!")
         return
     bot = Bot(token=TOKEN)
+
+    await bot.set_my_commands([
+        BotCommand(command="warp", description="⚡ Сгенерировать AmneziaWG конфиг"),
+    ])
+
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

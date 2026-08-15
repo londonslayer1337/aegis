@@ -8,12 +8,12 @@ HEADERS = {
     "Content-Type": "application/json; charset=UTF-8"
 }
 
-# Используем проверенные Clean IP от Cloudflare, которые пробивают блокировки
+# Используем эндпоинты Cloudflare с портом 4500 (как в рабочем примере)
 COUNTRY_ENDPOINTS = {
-    "de": {"name": "🇩🇪 Германия", "endpoint": "188.114.96.1:2408"},
-    "nl": {"name": "🇳🇱 Нидерланды", "endpoint": "188.114.97.1:2408"},
-    "us": {"name": "🇺🇸 США", "endpoint": "162.159.193.10:2408"},
-    "jp": {"name": "🇯🇵 Япония", "endpoint": "162.159.192.10:2408"}
+    "de": {"name": "🇩🇪 Германия", "endpoint": "engage.cloudflareclient.com:4500"},
+    "nl": {"name": "🇳🇱 Нидерланды", "endpoint": "162.159.192.1:4500"},
+    "us": {"name": "🇺🇸 США", "endpoint": "162.159.193.1:4500"},
+    "jp": {"name": "🇯🇵 Япония", "endpoint": "162.159.194.1:4500"}
 }
 
 def generate_wg_keys():
@@ -75,24 +75,28 @@ def build_amnezia_wg_config(warp_data):
     if not warp_data: 
         return None
         
-    # Рабочие параметры зашумления для пробития DPI (Jc/Jmin/Jmax/H1-H4)
+    # Вставляем структуру из твоего рабочего конфига
     return f"""[Interface]
 PrivateKey = {warp_data['private_key']}
-Address = {warp_data['v4_addr']}/32, {warp_data['v6_addr']}/128
-DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111
-
-Jc = 120
-Jmin = 40
-Jmax = 70
+Address = {warp_data['v4_addr']}, {warp_data['v6_addr']}
+DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001
+MTU = 1280
+Jc = 19
+Jmin = 76
+Jmax = 322
 S1 = 0
 S2 = 0
+S3 = 0
+S4 = 0
 H1 = 1
 H2 = 2
 H3 = 3
 H4 = 4
+I1 = <b 0x000100602112a442ff28ec860ce31adf94cf190b80220006706a6e617468000000060015313839343237343137323a436d42325a3246795977000000002400047d73d4d4802a0008a3b15ee41d3ecabc00250000002600148972b9890cdb1001c1ce2f8be724c92ad8c88c1a802800045e24362a>
 
 [Peer]
 PublicKey = {warp_data['peer_pubkey']}
+AllowedIPs = 0.0.0.0/0
 Endpoint = {warp_data['endpoint']}
-AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
 """

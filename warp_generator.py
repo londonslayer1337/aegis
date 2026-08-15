@@ -65,6 +65,34 @@ COUNTRY_ENDPOINTS = {
         "name": "🇯🇵 Япония",
         "clean_ips": ["162.159.194.1", "162.159.194.2", "162.159.197.1", "162.159.197.2"]
     }
+import base64
+import random
+import httpx
+from cryptography.hazmat.primitives.asymmetric import x25519
+from cryptography.hazmat.primitives import serialization
+
+HEADERS = {
+    "User-Agent": "okhttp/3.12.1",
+    "Content-Type": "application/json; charset=UTF-8"
+}
+
+COUNTRY_ENDPOINTS = {
+    "de": {
+        "name": "🇩🇪 Германия",
+        "clean_ips": ["162.159.192.1", "162.159.192.2", "188.114.96.1", "188.114.96.2"]
+    },
+    "nl": {
+        "name": "🇳🇱 Нидерланды",
+        "clean_ips": ["188.114.98.1", "188.114.98.2", "188.114.99.1", "188.114.99.2"]
+    },
+    "us": {
+        "name": "🇺🇸 США",
+        "clean_ips": ["162.159.195.1", "162.159.195.2", "162.159.196.1", "162.159.196.2"]
+    },
+    "jp": {
+        "name": "🇯🇵 Япония",
+        "clean_ips": ["162.159.194.1", "162.159.194.2", "162.159.197.1", "162.159.197.2"]
+    }
 }
 
 def generate_wg_keys():

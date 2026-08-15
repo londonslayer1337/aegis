@@ -6,38 +6,26 @@ import socket
 import json
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
-# Проверенные динамические подписки VLESS / VMess / Trojan / SS
-VLESS_SUBSCRIPTION_URLS = [
-    "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/All_Configs_Sub.txt",
-    "https://raw.githubusercontent.com/freefq/free/master/v2",
-    "https://raw.githubusercontent.com/mft00/v2ray/main/v2ray.txt",
-    "https://raw.githubusercontent.com/v2raywg/v2ray/main/v2ray",
+# Актуальные подписки с VLESS-REALITY ключами для обхода блокировок
+VLESS_REALITY_SUBSCRIPTIONS = [
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt",
+    "https://raw.githubusercontent.com/ByeWhiteLists/ByeWhiteLists2/main/ByeWhiteLists2.txt",
+    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/vl.txt",
     "https://raw.githubusercontent.com/EskandarAtaro/V2ray-Configs/main/Splitted-By-Protocol/vless.txt"
 ]
 
 def parse_host_and_port(key: str) -> tuple[str | None, int | None]:
-    """Извлекает хост (IP/домен) и порт из ключа."""
+    """Извлекает IP/домен и порт из ссылки VLESS."""
     try:
-        if key.startswith("vmess://"):
-            b64_data = key.replace("vmess://", "")
-            b64_data += "=" * ((4 - len(b64_data) % 4) % 4)
-            decoded = base64.b64decode(b64_data).decode('utf-8', errors='ignore')
-            data = json.loads(decoded)
-            return data.get("add"), int(data.get("port", 443))
-        else:
-            parsed = urlparse(key)
-            host = parsed.hostname
-            port = parsed.port or (443 if parsed.scheme in ["vless", "trojan"] else 80)
-            return host, port
+        parsed = urlparse(key)
+        host = parsed.hostname
+        port = parsed.port or 443
+        return host, port
     except Exception:
         return None, None
 
 def optimize_key_dns(key: str) -> str:
-    """
-    Удаляет встроенные параметры DNS из VLESS-ссылки.
-    Это заставляет V2Ray-клиенты использовать системный DNS телефона
-    (например, задействовать 'Частный DNS' из настроек Android).
-    """
+    """Удаляет параметр 'dns' из ключа, заставляя клиент использовать системный DNS телефона."""
     try:
         if not key.startswith("vless://"):
             return key
@@ -45,7 +33,7 @@ def optimize_key_dns(key: str) -> str:
         parsed = urlparse(key)
         query_params = parse_qs(parsed.query)
         
-        # Удаляем переопределение DNS, чтобы использовался системный DNS устройства
+        # Удаляем встроенный DNS, чтобы V2Ray подхватывал Частный DNS Android
         if 'dns' in query_params:
             del query_params['dns']
             
@@ -56,19 +44,17 @@ def optimize_key_dns(key: str) -> str:
         return key
 
 async def check_node_dns_and_socket(host: str, port: int, timeout: float = 2.0) -> bool:
-    """Проверяет возможность резолва хоста и проверяет активный TCP-сокет."""
+    """Проверяет DNS-резолв хоста и делает активный TCP-тест порта."""
     if not host or not port:
         return False
     try:
         loop = asyncio.get_event_loop()
-        # 1. Проверка DNS-резолва хоста
         ip_list = await loop.run_in_executor(
             None, lambda: socket.gethostbyname_ex(host)[2]
         )
         if not ip_list:
             return False
 
-        # 2. Проверка активного TCP сокета
         target_ip = ip_list[0]
         _, writer = await asyncio.wait_for(
             asyncio.open_connection(target_ip, port), 
@@ -80,11 +66,11 @@ async def check_node_dns_and_socket(host: str, port: int, timeout: float = 2.0) 
     except Exception:
         return False
 
-async def fetch_all_keys() -> list[str]:
-    """Скачивает и декодирует списки ключей из источников."""
+async def fetch_reality_keys() -> list[str]:
+    """Скачивает и отбирает строго VLESS-REALITY ключи."""
     all_keys = []
     async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
-        for url in VLESS_SUBSCRIPTION_URLS:
+        for url in VLESS_REALITY_SUBSCRIPTIONS:
             try:
                 response = await client.get(url)
                 if response.status_code != 200:
@@ -97,42 +83,34 @@ async def fetch_all_keys() -> list[str]:
                     decoded = raw_text
 
                 lines = [line.strip() for line in decoded.splitlines() if line.strip()]
-                valid_keys = [
-                    k for k in lines 
-                    if k.startswith(("vless://", "vmess://", "trojan://", "ss://"))
-                ]
-                all_keys.extend(valid_keys)
+                all_keys.extend(lines)
             except Exception as e:
-                print(f"[ERROR] Scraper fetch error: {e}")
+                print(f"[ERROR] Reality scraper error: {e}")
                 continue
-    return all_keys
+
+    # Фильтруем: берем ТОЛЬКО vless:// ключи, содержащие Reality-параметры (pbk= или security=reality)
+    reality_keys = [
+        k for k in all_keys 
+        if k.startswith("vless://") and ("pbk=" in k.lower() or "reality" in k.lower())
+    ]
+    
+    # Если REALITY не найдены, берем обычные VLESS
+    return reality_keys if reality_keys else [k for k in all_keys if k.startswith("vless://")]
 
 async def get_free_v2ray_config(country_code: str = None) -> str | None:
-    """
-    Основная функция для бота: получает ключи, ищет рабочий через проверку сокета
-    и возвращает оптимизированную ссылку под системный DNS.
-    """
-    keys = await fetch_all_keys()
+    """Генерирует рабочий VLESS-REALITY ключ для пользователя."""
+    keys = await fetch_reality_keys()
     if not keys:
         return None
 
-    # Приоритет отдается VLESS ключам
-    vless_keys = [k for k in keys if k.startswith("vless://")]
-    candidate_keys = vless_keys if vless_keys else keys
-
-    random.shuffle(candidate_keys)
+    random.shuffle(keys)
     
-    # Проверяем первые 20 кандидатов
-    for raw_key in candidate_keys[:20]:
+    # Проверяем первых 25 кандидатов по TCP сокету
+    for raw_key in keys[:25]:
         host, port = parse_host_and_port(raw_key)
         if host and port:
-            is_alive = await check_node_dns_and_socket(host, port)
-            if is_alive:
+            if await check_node_dns_and_socket(host, port):
                 return optimize_key_dns(raw_key)
 
-    # Запасной вариант, если сокет-тест не прошёл у первых 20
-    if candidate_keys:
-        return optimize_key_dns(random.choice(candidate_keys))
-        
-    
-    return None
+    # Запасной фолбэк
+    return optimize_key_dns(random.choice(keys))

@@ -37,6 +37,21 @@ COUNTRY_ENDPOINTS = {
     "de": {
         "name": "🇩🇪 Германия",
         "clean_ips": ["162.159.192.1", "162.159.192.2", "188.114.96.1", "188.114.96.2"]
+import base64
+import random
+import httpx
+from cryptography.hazmat.primitives.asymmetric import x25519
+from cryptography.hazmat.primitives import serialization
+
+HEADERS = {
+    "User-Agent": "okhttp/3.12.1",
+    "Content-Type": "application/json; charset=UTF-8"
+}
+
+COUNTRY_ENDPOINTS = {
+    "de": {
+        "name": "🇩🇪 Германия",
+        "clean_ips": ["162.159.192.1", "162.159.192.2", "188.114.96.1", "188.114.96.2"]
     },
     "nl": {
         "name": "🇳🇱 Нидерланды",

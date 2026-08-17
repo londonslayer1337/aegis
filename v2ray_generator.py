@@ -1,116 +1,77 @@
-import base64
-import random
-import httpx
-import asyncio
+import re
 import socket
-import json
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+import asyncio
+import aiohttp
 
-# Актуальные подписки с VLESS-REALITY ключами для обхода блокировок
-VLESS_REALITY_SUBSCRIPTIONS = [
-    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS.txt",
-    "https://raw.githubusercontent.com/ByeWhiteLists/ByeWhiteLists2/main/ByeWhiteLists2.txt",
-    "https://raw.githubusercontent.com/sevcator/5ubscrpt10n/main/protocols/vl.txt",
-    "https://raw.githubusercontent.com/EskandarAtaro/V2ray-Configs/main/Splitted-By-Protocol/vless.txt"
+# Список 10 публичных Telegram-каналов с VLESS/V2Ray ключами
+CHANNELS = [
+    "vless_keys",
+    "free_v2ray_keys",
+    "vpn_nodes",
+    "v2ray_free_conf",
+    "vless_v2ray_vpn",
+    "v2ray_configs",
+    "free_vpn_v2ray",
+    "vless_collector",
+    "free_vless_config",
+    "v2ray_server_list"
 ]
 
-def parse_host_and_port(key: str) -> tuple[str | None, int | None]:
-    """Извлекает IP/домен и порт из ссылки VLESS."""
+def is_server_alive(ip: str, port: int, timeout=2.5) -> bool:
+    """Проверяет доступность сервера по TCP-порту."""
     try:
-        parsed = urlparse(key)
-        host = parsed.hostname
-        port = parsed.port or 443
-        return host, port
-    except Exception:
-        return None, None
-
-def optimize_key_dns(key: str) -> str:
-    """Удаляет параметр 'dns' из ключа, заставляя клиент использовать системный DNS телефона."""
-    try:
-        if not key.startswith("vless://"):
-            return key
-            
-        parsed = urlparse(key)
-        query_params = parse_qs(parsed.query)
-        
-        # Удаляем встроенный DNS, чтобы V2Ray подхватывал Частный DNS Android
-        if 'dns' in query_params:
-            del query_params['dns']
-            
-        new_query = urlencode(query_params, doseq=True)
-        new_parsed = parsed._replace(query=new_query)
-        return urlunparse(new_parsed)
-    except Exception:
-        return key
-
-async def check_node_dns_and_socket(host: str, port: int, timeout: float = 2.0) -> bool:
-    """Проверяет DNS-резолв хоста и делает активный TCP-тест порта."""
-    if not host or not port:
-        return False
-    try:
-        loop = asyncio.get_event_loop()
-        ip_list = await loop.run_in_executor(
-            None, lambda: socket.gethostbyname_ex(host)[2]
-        )
-        if not ip_list:
-            return False
-
-        target_ip = ip_list[0]
-        _, writer = await asyncio.wait_for(
-            asyncio.open_connection(target_ip, port), 
-            timeout=timeout
-        )
-        writer.close()
-        await writer.wait_closed()
-        return True
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((ip, port))
+        sock.close()
+        return result == 0
     except Exception:
         return False
 
-async def fetch_reality_keys() -> list[str]:
-    """Скачивает и отбирает строго VLESS-REALITY ключи."""
-    all_keys = []
-    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
-        for url in VLESS_REALITY_SUBSCRIPTIONS:
-            try:
-                response = await client.get(url)
-                if response.status_code != 200:
-                    continue
-                
-                raw_text = response.text.strip()
-                try:
-                    decoded = base64.b64decode(raw_text).decode('utf-8', errors='ignore')
-                except Exception:
-                    decoded = raw_text
+def parse_vless_ip_port(vless_link: str):
+    """Извлекает IP/хост и порт из ссылки VLESS."""
+    match = re.search(r'@([^:]+):(\d+)', vless_link)
+    if match:
+        return match.group(1), int(match.group(2))
+    return None, None
 
-                lines = [line.strip() for line in decoded.splitlines() if line.strip()]
-                all_keys.extend(lines)
-            except Exception as e:
-                print(f"[ERROR] Reality scraper error: {e}")
-                continue
+async def fetch_keys_from_channel(session: aiohttp.ClientSession, channel: str) -> list[str]:
+    """Скачивает публичную веб-страницу канала и находит VLESS ссылки."""
+    url = f"https://t.me/s/{channel}"
+    try:
+        async with session.get(url, timeout=5) as response:
+            if response.status == 200:
+                html = await response.text()
+                # Находим все vless:// ключи
+                keys = re.findall(r'vless://[^\s<"\']+', html)
+                return keys
+    except Exception:
+        pass
+    return []
 
-    # Фильтруем: берем ТОЛЬКО vless:// ключи, содержащие Reality-параметры (pbk= или security=reality)
-    reality_keys = [
-        k for k in all_keys 
-        if k.startswith("vless://") and ("pbk=" in k.lower() or "reality" in k.lower())
-    ]
-    
-    # Если REALITY не найдены, берем обычные VLESS
-    return reality_keys if reality_keys else [k for k in all_keys if k.startswith("vless://")]
+async def get_free_v2ray_config() -> str | None:
+    """Главная функция: собирает ключи, чекает пинг и отдает первый рабочий."""
+    async with aiohttp.ClientSession() as session:
+        all_keys = []
+        tasks = [fetch_keys_from_channel(session, ch) for ch in CHANNELS]
+        results = await asyncio.gather(*tasks)
 
-async def get_free_v2ray_config(country_code: str = None) -> str | None:
-    """Генерирует рабочий VLESS-REALITY ключ для пользователя."""
-    keys = await fetch_reality_keys()
-    if not keys:
-        return None
+        for res in results:
+            all_keys.extend(res)
 
-    random.shuffle(keys)
-    
-    # Проверяем первых 25 кандидатов по TCP сокету
-    for raw_key in keys[:25]:
-        host, port = parse_host_and_port(raw_key)
-        if host and port:
-            if await check_node_dns_and_socket(host, port):
-                return optimize_key_dns(raw_key)
+        # Убираем дубликаты
+        all_keys = list(set(all_keys))
 
-    # Запасной фолбэк
-    return optimize_key_dns(random.choice(keys))
+        if not all_keys:
+            return None
+
+        # Проверяем ключи на живой TCP-порт
+        for key in all_keys:
+            ip, port = parse_vless_ip_port(key)
+            if ip and port:
+                # Запускаем проверку в отдельном потоке, чтобы не блокировать asyncio
+                loop = asyncio.get_running_loop()
+                alive = await loop.run_in_executor(None, is_server_alive, ip, port)
+                if alive:
+                    return key
+return None

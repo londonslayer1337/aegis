@@ -66,12 +66,13 @@ async def get_free_v2ray_config() -> str | None:
             return None
 
         # Проверяем ключи на живой TCP-порт
+        loop = asyncio.get_running_loop()
         for key in all_keys:
             ip, port = parse_vless_ip_port(key)
             if ip and port:
-                # Запускаем проверку в отдельном потоке, чтобы не блокировать asyncio
-                loop = asyncio.get_running_loop()
+                # Запускаем проверку без блокировки asyncio
                 alive = await loop.run_in_executor(None, is_server_alive, ip, port)
                 if alive:
                     return key
-return None
+
+    return None

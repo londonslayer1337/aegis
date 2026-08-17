@@ -1,122 +1,128 @@
-import asyncio
 import os
-from aiohttp import web
-from aiogram import Bot, Dispatcher, F, Router
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, BotCommand
-from aiogram.filters import CommandStart, Command
+import asyncio
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import CommandStart
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 
-from warp_generator import register_warp_account, build_amnezia_wg_config
+# Импортируем генератор подписок
 from v2ray_generator import get_free_v2ray_config
 
-TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-PORT = int(os.getenv("PORT", 8080))  # Рендер передает свой порт в переменные среды
+# Берем токен из переменных окружения Railway/Render
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ТВОЙ_ТЕЛЕГРАМ_ТОКЕН")
 
-bot = Bot(token=TOKEN)
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-router = Router()
 
-def get_main_keyboard():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛡 Получить AmneziaWG (WARP)", callback_data="get_warp")],
-        [InlineKeyboardButton(text="⚡ Получить VLESS / Happ ключ", callback_data="get_vless")]
-    ])
-
-async def set_bot_commands(bot: Bot):
-    commands = [
-        BotCommand(command="start", description="Главное меню / Перезапуск"),
-        BotCommand(command="vless", description="Получить свежий VLESS ключ")
+def get_main_keyboard() -> InlineKeyboardMarkup:
+    """Главное меню управления ботом."""
+    buttons = [
+        [InlineKeyboardButton(text="⚡ Получить AmneziaWG (Файл)", callback_data="get_awg")],
+        [InlineKeyboardButton(text="🌐 Получить VLESS (Подписка Happ)", callback_data="get_vless")],
+        [InlineKeyboardButton(text="❓ Инструкция по настройке", callback_data="get_help")]
     ]
-    await bot.set_my_commands(commands)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-@router.message(CommandStart())
-async def start_cmd(message: Message):
+@dp.message(CommandStart())
+async def cmd_start(message: types.Message):
+    """Приветственное сообщение."""
     await message.answer(
-        "👋 **Привет!** Выбери нужный тип VPN подключения:\n\n"
-        "• **AmneziaWG**: Конфиг-файл для приложения AmneziaWG.\n"
-        "• **VLESS / Happ**: Строка-ключ для приложений Happ, v2rayNG, NekoBox.",
-        reply_markup=get_main_keyboard(),
-        parse_mode="Markdown"
+        "👋 **Привет!**\n\n"
+        "Выбери нужный протокол ниже, чтобы получить бесплатную конфигурацию VPN:",
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
     )
 
-@router.message(Command("vless"))
-async def vless_cmd(message: Message):
-    status_msg = await message.answer("🔎 Ищу и проверяю рабочий VLESS ключ из каналов...")
-    key = await get_free_v2ray_config()
+@dp.callback_query(F.data == "get_awg")
+async def send_awg(callback: types.CallbackQuery):
+    """Отправка AmneziaWG конфигурационного файла с твоим рабочим шаблоном."""
+    await callback.answer("Готовлю файл...")
     
-    if key:
-        msg = (
-            "✅ **Твой проверенный VLESS / Xray ключ:**\n\n"
-            f"`{key}`\n\n"
-            "📌 **Инструкция:**\n"
-            "1. Нажмите на ключ, чтобы скопировать.\n"
-            "2. Откройте **Happ**, **v2rayNG** или **NekoBox**.\n"
-            "3. Нажмите **Импорт из буфера обмена**."
-        )
-        await status_msg.edit_text(msg, parse_mode="Markdown")
-    else:
-        await status_msg.edit_text("❌ В данный момент живых ключей не найдено. Попробуйте еще раз позже.")
+    # Твой основной рабочий шаблон AmneziaWG
+    awg_config = """[Interface]
+PrivateKey = wPbLOeUinrqiorXrdwX0TI1Q4lTwrRRM3i2tCcZ/tEg=
+Address = 172.16.0.2, 2606:4700:110:86cb:4ac1:7a24:a574:85e1
+DNS = 1.1.1.1, 1.0.0.1, 2606:4700:4700::1111, 2606:4700:4700::1001
+MTU = 1280
+Jc = 19
+Jmin = 76
+Jmax = 322
+S1 = 0
+S2 = 0
+S3 = 0
+S4 = 0
+H1 = 1
+H2 = 2
+H3 = 3
+H4 = 4
+I1 = <b 0x000100602112a442ff28ec860ce31adf94cf190b80220006706a6e617468000000060015313839343237343137323a436d42325a3246795977000000002400047d73d4d4802a0008a3b15ee41d3ecabc00250000002600148972b9890cdb1001c1ce2f8be724c92ad8c88c1a802800045e24362a>
 
-@router.callback_query(F.data == "get_warp")
-async def handle_warp(callback: CallbackQuery):
-    await callback.message.answer("⚙️ Генерирую AmneziaWG профиль...")
+[Peer]
+PublicKey = bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=
+AllowedIPs = 0.0.0.0/0
+Endpoint = engage.cloudflareclient.com:4500
+PersistentKeepalive = 25"""
+
+    # Формируем файл прямо в оперативной памяти
+    file_bytes = awg_config.encode('utf-8')
+    document = BufferedInputFile(file_bytes, filename="AmneziaWG_Free.conf")
+
+    caption = (
+        "⚡ **Твой конфигурационный файл AmneziaWG готов!**\n\n"
+        "1. Скачай файл `.conf` ниже.\n"
+        "2. Импортируй его в приложение **AmneziaWG**.\n"
+        "3. Включи переключатель для защиты трафика."
+    )
     
-    try:
-        warp_data = await register_warp_account("de")
-        config_text = build_amnezia_wg_config(warp_data)
-        
-        file_bytes = config_text.encode("utf-8")
-        input_file = BufferedInputFile(file_bytes, filename="AmneziaWARP.conf")
-        
-        await callback.message.answer_document(
-            document=input_file,
-            caption="✅ **Твой AmneziaWG конфиг готов!**\nИмпортируй файл в приложение AmneziaWG.",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        await callback.message.answer("❌ Ошибка генерации WARP конфига. Попробуйте позже.")
-        
+    await callback.message.answer_document(
+        document=document,
+        caption=caption,
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
+    )
+
+@dp.callback_query(F.data == "get_vless")
+async def send_vless(callback: types.CallbackQuery):
+    """Выдача авто-подписки VLESS для Happ/v2rayNG."""
+    await callback.answer("Получаю актуальную подписку...")
+    
+    sub_url = await get_free_v2ray_config()
+    
+    text = (
+        "🌐 **Твоя ссылка на авто-обновляемую подписку VLESS:**\n\n"
+        f"`{sub_url}`\n\n"
+        "📌 **Как добавить в Happ / v2rayNG:**\n"
+        "1. Нажми на ссылку выше, чтобы скопировать её.\n"
+        "2. Открой **Happ** ➔ нажми **`+`** в правом верхнем углу.\n"
+        "3. Выбери **Add Subscription** (Добавить подписку) / **Import via URL**.\n"
+        "4. Вставь ссылку, сохрани и нажми **Обновить (Update)**.\n\n"
+        "🔄 *Приложение авто-обновляет список и само выбирает рабочий сервер.*"
+    )
+    
+    await callback.message.answer(
+        text=text,
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
+    )
+
+@dp.callback_query(F.data == "get_help")
+async def send_help(callback: types.CallbackQuery):
+    """Раздел справки."""
     await callback.answer()
-
-@router.callback_query(F.data == "get_vless")
-async def handle_vless(callback: CallbackQuery):
-    status_msg = await callback.message.answer("🔎 Ищу и проверяю рабочий VLESS ключ из каналов...")
-    key = await get_free_v2ray_config()
     
-    if key:
-        msg = (
-            "✅ **Твой проверенный VLESS / Xray ключ:**\n\n"
-            f"`{key}`\n\n"
-            "📌 **Инструкция:**\n"
-            "1. Нажмите на ключ, чтобы скопировать.\n"
-            "2. Откройте **Happ**, **v2rayNG** или **NekoBox**.\n"
-            "3. Нажмите **Импорт из буфера обмена**."
-        )
-        await status_msg.edit_text(msg, parse_mode="Markdown")
-    else:
-        await status_msg.edit_text("❌ В данный момент живых ключей не найдено. Попробуйте еще раз позже.")
-        
-    await callback.answer()
-
-# --- Веб-сервер для затычки Render Health Check ---
-async def handle_health_check(request):
-    return web.Response(text="Bot is running alive!")
-
-async def start_health_server():
-    app = web.Application()
-    app.router.add_get('/', handle_health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
-    await site.start()
+    help_text = (
+        "📖 **Инструкция по выбору протокола:**\n\n"
+        "🔹 **AmneziaWG**: Идеален для Android, iOS и ПК. Стойко обходит блокировки DPI на уровне провайдеров.\n\n"
+        "🔹 **VLESS (Happ)**: Использует подписку с сотнями узлов. Если один сервер заблокируют, приложение автоматически переключит тебя на рабочий."
+    )
+    
+    await callback.message.answer(
+        text=help_text,
+        parse_mode="Markdown",
+        reply_markup=get_main_keyboard()
+    )
 
 async def main():
-    dp.include_router(router)
-    await set_bot_commands(bot)
-    
-    # Запускаем легкий веб-сервер для Render
-    await start_health_server()
-    
-    # Запускаем поллинг бота
+    print("🚀 Бот успешно запущен и готов к работе...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

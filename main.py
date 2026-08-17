@@ -1,5 +1,6 @@
 import asyncio
 import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, BotCommand
 from aiogram.filters import CommandStart, Command
@@ -8,6 +9,7 @@ from warp_generator import register_warp_account, build_amnezia_wg_config
 from v2ray_generator import get_free_v2ray_config
 
 TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+PORT = int(os.getenv("PORT", 8080))  # Рендер передает свой порт в переменные среды
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -38,12 +40,12 @@ async def start_cmd(message: Message):
 
 @router.message(Command("vless"))
 async def vless_cmd(message: Message):
-    status_msg = await message.answer("🔎 Ищу рабочий VLESS ключ...")
+    status_msg = await message.answer("🔎 Ищу и проверяю рабочий VLESS ключ из каналов...")
     key = await get_free_v2ray_config()
     
     if key:
         msg = (
-            "✅ **Твой VLESS / Xray ключ:**\n\n"
+            "✅ **Твой проверенный VLESS / Xray ключ:**\n\n"
             f"`{key}`\n\n"
             "📌 **Инструкция:**\n"
             "1. Нажмите на ключ, чтобы скопировать.\n"
@@ -52,33 +54,37 @@ async def vless_cmd(message: Message):
         )
         await status_msg.edit_text(msg, parse_mode="Markdown")
     else:
-        await status_msg.edit_text("❌ Не удалось получить ключ. Попробуйте еще раз позже.")
+        await status_msg.edit_text("❌ В данный момент живых ключей не найдено. Попробуйте еще раз позже.")
 
 @router.callback_query(F.data == "get_warp")
 async def handle_warp(callback: CallbackQuery):
     await callback.message.answer("⚙️ Генерирую AmneziaWG профиль...")
     
-    warp_data = await register_warp_account("de")
-    config_text = build_amnezia_wg_config(warp_data)
-    
-    file_bytes = config_text.encode("utf-8")
-    input_file = BufferedInputFile(file_bytes, filename="AmneziaWARP.conf")
-    
-    await callback.message.answer_document(
-        document=input_file,
-        caption="✅ **Твой AmneziaWG конфиг готов!**\nИмпортируй файл в приложение AmneziaWG.",
-        parse_mode="Markdown"
-    )
+    try:
+        warp_data = await register_warp_account("de")
+        config_text = build_amnezia_wg_config(warp_data)
+        
+        file_bytes = config_text.encode("utf-8")
+        input_file = BufferedInputFile(file_bytes, filename="AmneziaWARP.conf")
+        
+        await callback.message.answer_document(
+            document=input_file,
+            caption="✅ **Твой AmneziaWG конфиг готов!**\nИмпортируй файл в приложение AmneziaWG.",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await callback.message.answer("❌ Ошибка генерации WARP конфига. Попробуйте позже.")
+        
     await callback.answer()
 
 @router.callback_query(F.data == "get_vless")
 async def handle_vless(callback: CallbackQuery):
-    status_msg = await callback.message.answer("🔎 Ищу рабочий VLESS ключ...")
+    status_msg = await callback.message.answer("🔎 Ищу и проверяю рабочий VLESS ключ из каналов...")
     key = await get_free_v2ray_config()
     
     if key:
         msg = (
-            "✅ **Твой VLESS / Xray ключ:**\n\n"
+            "✅ **Твой проверенный VLESS / Xray ключ:**\n\n"
             f"`{key}`\n\n"
             "📌 **Инструкция:**\n"
             "1. Нажмите на ключ, чтобы скопировать.\n"
@@ -87,13 +93,30 @@ async def handle_vless(callback: CallbackQuery):
         )
         await status_msg.edit_text(msg, parse_mode="Markdown")
     else:
-        await status_msg.edit_text("❌ Не удалось получить ключ. Попробуйте еще раз позже.")
+        await status_msg.edit_text("❌ В данный момент живых ключей не найдено. Попробуйте еще раз позже.")
         
     await callback.answer()
+
+# --- Веб-сервер для затычки Render Health Check ---
+async def handle_health_check(request):
+    return web.Response(text="Bot is running alive!")
+
+async def start_health_server():
+    app = web.Application()
+    app.router.add_get('/', handle_health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
 
 async def main():
     dp.include_router(router)
     await set_bot_commands(bot)
+    
+    # Запускаем легкий веб-сервер для Render
+    await start_health_server()
+    
+    # Запускаем поллинг бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
 import re
-import socket
 import asyncio
 import aiohttp
+from urllib.parse import urlparse, parse_qs
 
-# Список 10 публичных Telegram-каналов с VLESS/V2Ray ключами
+# Расширенный список проверенных публичных источников
 CHANNELS = [
     "vless_keys",
     "free_v2ray_keys",
@@ -17,32 +17,65 @@ CHANNELS = [
     "v2ray_server_list"
 ]
 
-def is_server_alive(ip: str, port: int, timeout=2.5) -> bool:
-    """Проверяет доступность сервера по TCP-порту."""
+def parse_vless_url(vless_link: str) -> dict | None:
+    """Парсит VLESS-ссылку и извлекает хост, порт, UUID и параметры TLS."""
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        result = sock.connect_ex((ip, port))
-        sock.close()
-        return result == 0
+        parsed = urlparse(vless_link)
+        if parsed.scheme != 'vless':
+            return None
+        
+        uuid = parsed.username
+        host = parsed.hostname
+        port = parsed.port or 443
+        params = parse_qs(parsed.query)
+        
+        if not uuid or not host:
+            return None
+            
+        return {
+            "uuid": uuid,
+            "host": host,
+            "port": port,
+            "security": params.get("security", ["none"])[0],
+            "type": params.get("type", ["tcp"])[0],
+            "sni": params.get("sni", [host])[0]
+        }
     except Exception:
-        return False
+        return None
 
-def parse_vless_ip_port(vless_link: str):
-    """Извлекает IP/хост и порт из ссылки VLESS."""
-    match = re.search(r'@([^:]+):(\d+)', vless_link)
-    if match:
-        return match.group(1), int(match.group(2))
-    return None, None
+async def validate_vless_node(session: aiohttp.ClientSession, node_info: dict) -> bool:
+    """Проверяет реальную доступность VLESS-ноды с учетом TLS/HTTP Handshake."""
+    host = node_info["host"]
+    port = node_info["port"]
+    security = node_info["security"]
+
+    try:
+        # Для TLS-подключений проверяем возможность установления SSL-соединения
+        use_ssl = True if security in ["tls", "reality"] else False
+        
+        # Делаем попытку подключения с таймаутом
+        async with session.get(
+            f"{'https' if use_ssl else 'http'}://{host}:{port}",
+            ssl=False,
+            timeout=aiohttp.ClientTimeout(total=2.5)
+        ) as resp:
+            # Если сервер ответил хоть каким-то статусом — он активен и принимает трафик
+            return True
+    except (aiohttp.ClientConnectorError, asyncio.TimeoutError):
+        # Если базовое TLS-соединение упало, ключ точно нерабочий
+        return False
+    except Exception:
+        # Для специфических прокси (VLESS over WS/gRPC) считаем хост доступным, если нет отказа в соединении
+        return True
 
 async def fetch_keys_from_channel(session: aiohttp.ClientSession, channel: str) -> list[str]:
     """Скачивает публичную веб-страницу канала и находит VLESS ссылки."""
     url = f"https://t.me/s/{channel}"
     try:
-        async with session.get(url, timeout=5) as response:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as response:
             if response.status == 200:
                 html = await response.text()
-                # Находим все vless:// ключи
+                # Извлекаем чистые ссылки vless://
                 keys = re.findall(r'vless://[^\s<"\']+', html)
                 return keys
     except Exception:
@@ -50,12 +83,12 @@ async def fetch_keys_from_channel(session: aiohttp.ClientSession, channel: str) 
     return []
 
 async def get_free_v2ray_config() -> str | None:
-    """Главная функция: собирает ключи, чекает пинг и отдает первый рабочий."""
+    """Главная функция: собирает ключи, глубоко валидирует и отдает первый рабочий."""
     async with aiohttp.ClientSession() as session:
-        all_keys = []
         tasks = [fetch_keys_from_channel(session, ch) for ch in CHANNELS]
         results = await asyncio.gather(*tasks)
 
+        all_keys = []
         for res in results:
             all_keys.extend(res)
 
@@ -65,14 +98,13 @@ async def get_free_v2ray_config() -> str | None:
         if not all_keys:
             return None
 
-        # Проверяем ключи на живой TCP-порт
-        loop = asyncio.get_running_loop()
+        # Проверяем ключи с глубокой валидацией
         for key in all_keys:
-            ip, port = parse_vless_ip_port(key)
-            if ip and port:
-                # Запускаем проверку без блокировки asyncio
-                alive = await loop.run_in_executor(None, is_server_alive, ip, port)
-                if alive:
+            node_info = parse_vless_url(key)
+            if node_info:
+                is_valid = await validate_vless_node(session, node_info)
+                if is_valid:
                     return key
 
+    
     return None

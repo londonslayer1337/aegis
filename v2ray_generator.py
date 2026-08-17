@@ -70,5 +70,7 @@ async def get_free_v2ray_config() -> str | None:
             return robust_keys[0]
             
         # Если REALITY не найдено, отдаем любой имеющийся VLESS
-        return all_keys[0] if all_keys 
-        else None
+        if all_keys:
+            return all_keys[0]
+            
+        return None

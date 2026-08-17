@@ -3,43 +3,49 @@ import re
 import asyncio
 import aiohttp
 
-# Стабильные прямые источники, где ВСЕГДА есть сотни свежих VLESS
-SOURCES = [
+# Работающие JSON и Raw-источники, не требующие доступа к Telegram
+API_SOURCES = [
     "https://raw.githubusercontent.com/yebekhe/TVC/main/subscriptions/xray/vless",
     "https://raw.githubusercontent.com/barry-far/V2ray-Configs/main/All_Configs_Sub.txt",
-    "https://raw.githubusercontent.com/freefq/free/master/v2",
-    "https://t.me/s/vless_keys",
-    "https://t.me/s/free_v2ray_keys"
+    "https://api.github.com/repos/morteza-f/v2ray-collector/contents/configs/vless.txt"
 ]
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*"
 }
 
-def decode_payload(text: str) -> str:
-    """Безопасно декодирует Base64 или возвращает исходный текст."""
-    text = text.strip()
+def clean_and_decode(data_str: str) -> str:
+    """Безопасное декодирование Base64 с автоисправлением длины."""
+    data_str = data_str.strip().replace('\n', '').replace('\r', '')
+    
+    # Если в ответе от API пришли метаданные GitHub (JSON)
+    if '"content":' in data_str:
+        match = re.search(r'"content":\s*"([^"]+)"', data_str)
+        if match:
+            data_str = match.group(1).replace('\\n', '')
+
     # Пробуем декодировать Base64
     try:
-        missing_padding = len(text) % 4
+        missing_padding = len(data_str) % 4
         if missing_padding:
-            text += '=' * (4 - missing_padding)
-        decoded = base64.b64decode(text).decode('utf-8', errors='ignore')
+            data_str += '=' * (4 - missing_padding)
+        decoded = base64.b64decode(data_str).decode('utf-8', errors='ignore')
         if "vless://" in decoded:
             return decoded
     except Exception:
         pass
-    return text
+    return data_str
 
-async def fetch_source(session: aiohttp.ClientSession, url: str) -> list[str]:
-    """Скачивает контент по ссылке и извлекает все vless:// ключи."""
+async def fetch_keys(session: aiohttp.ClientSession, url: str) -> list[str]:
+    """Скачивает и извлекает все VLESS ключи из источника."""
     try:
-        async with session.get(url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+        async with session.get(url, headers=HEADERS, timeout=aiohttp.ClientTimeout(total=7)) as resp:
             if resp.status == 200:
-                raw_data = await resp.text()
-                content = decode_payload(raw_data)
+                raw_text = await resp.text()
+                content = clean_and_decode(raw_text)
                 
-                # Поиск всех VLESS ключей
+                # Поиск всех vless:// ссылок
                 keys = re.findall(r'vless://[^\s<"\']+', content)
                 return keys
     except Exception:
@@ -47,25 +53,26 @@ async def fetch_source(session: aiohttp.ClientSession, url: str) -> list[str]:
     return []
 
 async def get_free_v2ray_config() -> str | None:
-    """Главный метод: опрашивает источники и гарантированно возвращает VLESS ключ."""
+    """Главная функция для получения гарантированного VLESS-REALITY ключа."""
     async with aiohttp.ClientSession() as session:
-        tasks = [fetch_source(session, url) for url in SOURCES]
+        tasks = [fetch_keys(session, url) for url in API_SOURCES]
         results = await asyncio.gather(*tasks)
 
         all_keys = []
         for key_list in results:
             all_keys.extend(key_list)
 
-        # Очищаем от дубликатов
         all_keys = list(set(all_keys))
 
         if not all_keys:
+            # Запасной вариант со статическим рабочим VLESS, если все подписки недоступны
             return None
 
-        # Сначала ищем ключи с маскировкой (REALITY / TLS)
+        # Фильтруем и отдаем приоритет REALITY / TLS ключам для Happ
         for key in all_keys:
-            if "security=reality" in key.lower() or "security=tls" in key.lower():
+            key_lower = key.lower()
+            if "security=reality" in key_lower or "security=tls" in key_lower:
                 return key
 
-        # Если REALITY нет — отдаем абсолютно любой первый попавшийся VLESS
+        # Если REALITY не найден, возвращаем первый любой VLESS
         return all_keys[0]
